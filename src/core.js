@@ -325,7 +325,7 @@ export function checkpoint({
   // Projection is part of the checkpoint transaction. If the configured
   // Obsidian note lives inside this repository, write it before sealing the
   // repository fingerprint so the gate observes the exact post-checkpoint tree.
-  const obsidian = syncObsidian({ cwd: repoRoot, homeDir, exec });
+  const obsidian = syncObsidian({ cwd: repoRoot, homeDir, exec, taskId: task.id });
 
   const fingerprint = repositoryFingerprint(repoRoot, exec);
   runtime.lastCheckpoint = { taskId: task.id, at: isoNow(now), fingerprint };
@@ -359,37 +359,67 @@ export function projectStatus({ cwd = process.cwd(), exec = execFileSync } = {})
   return { repoRoot, enabled: true, config, state, gate: gateStatus({ cwd: repoRoot, exec }) };
 }
 
+function unitMarkerKey(taskId) {
+  return encodeURIComponent(clean(taskId, 'task id', { required: true, max: 120 }));
+}
+
+export function unitMarkers(taskId) {
+  const key = unitMarkerKey(taskId);
+  return {
+    begin: `<!-- DOCFLOW:UNIT:${key}:START -->`,
+    end: `<!-- DOCFLOW:UNIT:${key}:END -->`,
+  };
+}
+
+export function renderTaskUnit(task) {
+  const normalized = validateTask(JSON.parse(JSON.stringify(task)));
+  const markers = unitMarkers(normalized.id);
+  const lines = [markers.begin, `## ${normalized.id} · ${normalized.title}`, ''];
+  lines.push(`**Task:** ${normalized.task}`);
+  lines.push(`**Started:** ${normalized.started}`);
+  lines.push(`**Status:** ${normalized.status}`);
+  lines.push('');
+  lines.push('**Current**', normalized.current || '-', '');
+  lines.push('**Next**', normalized.next || '-', '');
+  lines.push('**History**');
+  if (normalized.history.length) {
+    for (const entry of normalized.history) lines.push(`- ${entry.text}`);
+  } else {
+    lines.push('-');
+  }
+  if (normalized.completed) lines.push('', `**Completed:** ${normalized.completed}`);
+  if (normalized.outcome) lines.push(`**Outcome:** ${normalized.outcome}`);
+  lines.push(markers.end);
+  return `${lines.join('\n')}\n`;
+}
+
 export function renderProgress(state) {
   const normalized = validateState(JSON.parse(JSON.stringify(state)));
   const lines = [MANAGED_BEGIN, GENERATED_NOTICE, ''];
   if (!normalized.tasks.length) {
     lines.push('_No DocFlow version/task records yet._');
-  }
-  for (const task of normalized.tasks) {
-    lines.push(`## ${task.id} · ${task.title}`, '');
-    lines.push(`**Task:** ${task.task}`);
-    lines.push(`**Started:** ${task.started}`);
-    lines.push(`**Status:** ${task.status}`);
-    lines.push('');
-    lines.push('**Current**', task.current || '-', '');
-    lines.push('**Next**', task.next || '-', '');
-    lines.push('**History**');
-    if (task.history.length) {
-      for (const entry of task.history) lines.push(`- ${entry.text}`);
-    } else {
-      lines.push('-');
+  } else {
+    for (const task of normalized.tasks) {
+      lines.push(renderTaskUnit(task).trimEnd(), '');
     }
-    if (task.completed) lines.push('', `**Completed:** ${task.completed}`);
-    if (task.outcome) lines.push(`**Outcome:** ${task.outcome}`);
-    lines.push('');
+    while (lines.at(-1) === '') lines.pop();
   }
-  while (lines.at(-1) === '') lines.pop();
-  lines.push('', MANAGED_END);
+  lines.push(MANAGED_END);
   return `${lines.join('\n')}\n`;
 }
 
 function markerCount(text, marker) {
   return text.split(marker).length - 1;
+}
+
+function managedBounds(text) {
+  const bc = markerCount(text, MANAGED_BEGIN);
+  const ec = markerCount(text, MANAGED_END);
+  if (bc !== 1 || ec !== 1) throw new Error('Refusing to update malformed or duplicate DocFlow managed block');
+  const start = text.indexOf(MANAGED_BEGIN);
+  const endStart = text.indexOf(MANAGED_END);
+  if (endStart < start) throw new Error('Refusing to update malformed DocFlow managed block');
+  return { start, innerStart: start + MANAGED_BEGIN.length, endStart, end: endStart + MANAGED_END.length };
 }
 
 export function upsertManagedBlock(existing, block) {
@@ -400,12 +430,54 @@ export function upsertManagedBlock(existing, block) {
     const prefix = text.trimEnd();
     return `${prefix ? `${prefix}\n\n` : ''}${block.trimEnd()}\n`;
   }
-  if (bc !== 1 || ec !== 1) throw new Error('Refusing to update malformed or duplicate DocFlow managed block');
-  const start = text.indexOf(MANAGED_BEGIN);
-  const endStart = text.indexOf(MANAGED_END);
-  if (endStart < start) throw new Error('Refusing to update malformed DocFlow managed block');
-  const end = endStart + MANAGED_END.length;
-  return `${text.slice(0, start)}${block.trimEnd()}${text.slice(end)}`.replace(/\s*$/, '\n');
+  const bounds = managedBounds(text);
+  return `${text.slice(0, bounds.start)}${block.trimEnd()}${text.slice(bounds.end)}`.replace(/\s*$/, '\n');
+}
+
+export function ensureManagedContainer(existing) {
+  const text = String(existing ?? '');
+  const bc = markerCount(text, MANAGED_BEGIN);
+  const ec = markerCount(text, MANAGED_END);
+  if (bc === 0 && ec === 0) {
+    const block = `${MANAGED_BEGIN}\n${GENERATED_NOTICE}\n\n_No DocFlow version/task records yet._\n${MANAGED_END}\n`;
+    const prefix = text.trimEnd();
+    return `${prefix ? `${prefix}\n\n` : ''}${block}`;
+  }
+  managedBounds(text);
+  return text;
+}
+
+export function upsertManagedUnit(existing, task) {
+  const normalized = validateTask(JSON.parse(JSON.stringify(task)));
+  const unit = renderTaskUnit(normalized).trimEnd();
+  const markers = unitMarkers(normalized.id);
+  let text = ensureManagedContainer(existing);
+  const bounds = managedBounds(text);
+
+  const beginCount = markerCount(text, markers.begin);
+  const endCount = markerCount(text, markers.end);
+  if (beginCount !== endCount || beginCount > 1) {
+    throw new Error(`Refusing to update malformed or duplicate DocFlow unit block for ${normalized.id}`);
+  }
+
+  if (beginCount === 1) {
+    const start = text.indexOf(markers.begin, bounds.innerStart);
+    const endStart = text.indexOf(markers.end, start);
+    if (start < bounds.innerStart || endStart < start || endStart > bounds.endStart) {
+      throw new Error(`Refusing to update malformed DocFlow unit block for ${normalized.id}`);
+    }
+    const end = endStart + markers.end.length;
+    return `${text.slice(0, start)}${unit}${text.slice(end)}`;
+  }
+
+  let inner = text.slice(bounds.innerStart, bounds.endStart);
+  inner = inner.replace(/\n?\s*_No DocFlow version\/task records yet\._\s*/g, '\n');
+  if (!inner.includes(GENERATED_NOTICE)) {
+    inner = `\n${GENERATED_NOTICE}\n${inner.trim()}\n`;
+  }
+  inner = inner.trimEnd();
+  const appended = `${inner}\n\n${unit}\n`;
+  return `${text.slice(0, bounds.innerStart)}${appended}${text.slice(bounds.endStart)}`;
 }
 
 export function globalConfigPath(homeDir = os.homedir()) {
@@ -440,7 +512,9 @@ function configureShape(value) {
   return { schemaVersion: SCHEMA_VERSION, obsidian: { vault, projectFolder: folder } };
 }
 
-export function syncObsidian({ cwd = process.cwd(), homeDir = os.homedir(), exec = execFileSync } = {}) {
+export function syncObsidian({
+  cwd = process.cwd(), homeDir = os.homedir(), exec = execFileSync, taskId = null,
+} = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   const repoConfig = loadRepoConfig(repoRoot);
   if (!repoConfig) throw new Error('DocFlow is not enabled in this repository');
@@ -451,7 +525,7 @@ export function syncObsidian({ cwd = process.cwd(), homeDir = os.homedir(), exec
   const target = path.resolve(global.obsidian.vault, global.obsidian.projectFolder, repoConfig.obsidianNote);
   const allowedRoot = path.resolve(global.obsidian.vault, global.obsidian.projectFolder);
   if (target !== allowedRoot && !target.startsWith(`${allowedRoot}${path.sep}`)) throw new Error('Resolved Obsidian note escaped the configured project folder');
-  const block = renderProgress(state);
+
   let created = false;
   let existing = '';
   if (fs.existsSync(target)) {
@@ -460,7 +534,11 @@ export function syncObsidian({ cwd = process.cwd(), homeDir = os.homedir(), exec
     created = true;
     existing = `---\ntype: project\n---\n\n${projectSource ? `${projectSource}\n` : `# ${repoConfig.projectName}\n`}`;
   }
-  const next = upsertManagedBlock(existing, block);
+
+  let next = ensureManagedContainer(existing);
+  const tasks = taskId == null ? state.tasks : [findTask(state, taskId)];
+  for (const task of tasks) next = upsertManagedUnit(next, task);
+
   atomicWrite(target, next);
-  return { skipped: false, created, path: target };
+  return { skipped: false, created, path: target, updatedTaskIds: tasks.map((task) => task.id) };
 }
