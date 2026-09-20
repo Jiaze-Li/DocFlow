@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -12,6 +13,7 @@ import {
   initRepo,
   startTask,
   syncObsidian,
+  unitMarkers,
   upsertManagedBlock,
 } from '../src/core.js';
 import { tempGitRepo, tempHome } from './helpers.js';
@@ -81,4 +83,91 @@ test('checkpoint seals the fingerprint after an Obsidian projection inside the r
   assert.equal(result.obsidian.skipped, false);
   assert.equal(result.obsidian.path, path.join(repo, 'notes', 'project - demo.md'));
   assert.equal(gateStatus({ cwd: repo }).status, 'READY');
+});
+
+
+function unitText(note, taskId) {
+  const markers = unitMarkers(taskId);
+  const start = note.indexOf(markers.begin);
+  const endStart = note.indexOf(markers.end, start);
+  assert.ok(start >= 0, `missing unit start for ${taskId}`);
+  assert.ok(endStart > start, `missing unit end for ${taskId}`);
+  return note.slice(start, endStart + markers.end.length);
+}
+
+test('two worktrees update independent units in one Obsidian project note', () => {
+  const root = tempGitRepo();
+  const parent = path.dirname(root);
+  const afm = path.join(parent, `${path.basename(root)}-afm`);
+  const scaling = path.join(parent, `${path.basename(root)}-scaling`);
+  execFileSync('git', ['-C', root, 'worktree', 'add', '-q', '-b', 'afm-workflow', afm, 'HEAD']);
+  execFileSync('git', ['-C', root, 'worktree', 'add', '-q', '-b', 'v5.3.8', scaling, 'HEAD']);
+
+  const home = tempHome();
+  const vault = path.join(home, 'PhD');
+  configureGlobal({ homeDir: home, vault, projectFolder: '02 Projects' });
+
+  initRepo({ cwd: afm, projectName: 'SpinLab', obsidianNote: 'project - spinlab.md' });
+  startTask({
+    cwd: afm,
+    id: 'afm-workflow',
+    title: 'AFM Plotting Workflow',
+    task: 'Add AFM plotting workflow.',
+    current: 'AFM first version can plot data.',
+    next: 'Add flatten.',
+  });
+  syncObsidian({ cwd: afm, homeDir: home, taskId: 'afm-workflow' });
+
+  const notePath = path.join(vault, '02 Projects', 'project - spinlab.md');
+  const afterAfm = fs.readFileSync(notePath, 'utf8');
+  const afmBeforeScaling = unitText(afterAfm, 'afm-workflow');
+
+  initRepo({ cwd: scaling, projectName: 'SpinLab', obsidianNote: 'project - spinlab.md' });
+  syncObsidian({ cwd: scaling, homeDir: home });
+  assert.equal(unitText(fs.readFileSync(notePath, 'utf8'), 'afm-workflow'), afmBeforeScaling);
+
+  startTask({
+    cwd: scaling,
+    id: 'v5.3.8',
+    title: '3ω Scaling vs Angle',
+    task: 'Adapt the 3ω scaling workflow for angle data.',
+    current: 'Angle workflow adaptation has started.',
+    next: 'Validate the scaling output.',
+  });
+  syncObsidian({ cwd: scaling, homeDir: home, taskId: 'v5.3.8' });
+
+  const both = fs.readFileSync(notePath, 'utf8');
+  const scalingBeforeAfmCheckpoint = unitText(both, 'v5.3.8');
+
+  beginRound({ cwd: afm, id: 'afm-workflow' });
+  fs.appendFileSync(path.join(afm, 'app.txt'), 'AFM UI work\n');
+  checkpoint({
+    cwd: afm,
+    homeDir: home,
+    id: 'afm-workflow',
+    current: 'AFM UI first revision is complete.',
+    next: 'Add selectable flatten.',
+  });
+
+  const afterAfmCheckpoint = fs.readFileSync(notePath, 'utf8');
+  assert.match(unitText(afterAfmCheckpoint, 'afm-workflow'), /AFM UI first revision is complete/);
+  assert.match(unitText(afterAfmCheckpoint, 'afm-workflow'), /- AFM first version can plot data\./);
+  assert.equal(unitText(afterAfmCheckpoint, 'v5.3.8'), scalingBeforeAfmCheckpoint);
+
+  const afmBeforeScalingCheckpoint = unitText(afterAfmCheckpoint, 'afm-workflow');
+  beginRound({ cwd: scaling, id: 'v5.3.8' });
+  fs.appendFileSync(path.join(scaling, 'app.txt'), 'scaling work\n');
+  checkpoint({
+    cwd: scaling,
+    homeDir: home,
+    id: 'v5.3.8',
+    current: 'Angle scaling output is validated.',
+    next: 'Refine the presentation.',
+  });
+
+  const finalNote = fs.readFileSync(notePath, 'utf8');
+  assert.equal(unitText(finalNote, 'afm-workflow'), afmBeforeScalingCheckpoint);
+  assert.match(unitText(finalNote, 'v5.3.8'), /Angle scaling output is validated/);
+  assert.equal(finalNote.split('<!-- DOCFLOW:UNIT:afm-workflow:START -->').length - 1, 1);
+  assert.equal(finalNote.split('<!-- DOCFLOW:UNIT:v5.3.8:START -->').length - 1, 1);
 });
