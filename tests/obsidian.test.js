@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -170,4 +170,87 @@ test('two worktrees update independent units in one Obsidian project note', () =
   assert.match(unitText(finalNote, 'v5.3.8'), /Angle scaling output is validated/);
   assert.equal(finalNote.split('<!-- DOCFLOW:UNIT:afm-workflow:START -->').length - 1, 1);
   assert.equal(finalNote.split('<!-- DOCFLOW:UNIT:v5.3.8:START -->').length - 1, 1);
+});
+
+
+function runCheckpointProcess({ cwd, homeDir, id, current, next }) {
+  const coreUrl = new URL('../src/core.js', import.meta.url).href;
+  const script = [
+    `import { checkpoint } from ${JSON.stringify(coreUrl)};`,
+    `checkpoint(${JSON.stringify({ cwd, homeDir, id, current, next })});`,
+  ].join('\n');
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`checkpoint child failed (${code}): ${stderr}`));
+    });
+  });
+}
+
+test('concurrent worktree checkpoints preserve both Project units', async () => {
+  const root = tempGitRepo();
+  const parent = path.dirname(root);
+  const afm = path.join(parent, `${path.basename(root)}-concurrent-afm`);
+  const scaling = path.join(parent, `${path.basename(root)}-concurrent-scaling`);
+  execFileSync('git', ['-C', root, 'worktree', 'add', '-q', '-b', 'concurrent-afm', afm, 'HEAD']);
+  execFileSync('git', ['-C', root, 'worktree', 'add', '-q', '-b', 'concurrent-scaling', scaling, 'HEAD']);
+
+  const home = tempHome();
+  const vault = path.join(home, 'PhD');
+  configureGlobal({ homeDir: home, vault, projectFolder: '02 Projects' });
+
+  initRepo({ cwd: afm, projectName: 'SpinLab', obsidianNote: 'project - spinlab.md' });
+  startTask({
+    cwd: afm,
+    id: 'afm-workflow',
+    title: 'AFM Plotting Workflow',
+    task: 'Add AFM plotting workflow.',
+    current: 'AFM initial state.',
+    next: 'AFM next.',
+  });
+  syncObsidian({ cwd: afm, homeDir: home, taskId: 'afm-workflow' });
+
+  initRepo({ cwd: scaling, projectName: 'SpinLab', obsidianNote: 'project - spinlab.md' });
+  startTask({
+    cwd: scaling,
+    id: 'v5.3.8',
+    title: '3ω Scaling vs Angle',
+    task: 'Adapt angle scaling.',
+    current: 'Scaling initial state.',
+    next: 'Scaling next.',
+  });
+  syncObsidian({ cwd: scaling, homeDir: home, taskId: 'v5.3.8' });
+
+  beginRound({ cwd: afm, id: 'afm-workflow' });
+  beginRound({ cwd: scaling, id: 'v5.3.8' });
+  fs.appendFileSync(path.join(afm, 'app.txt'), 'parallel AFM work\n');
+  fs.appendFileSync(path.join(scaling, 'app.txt'), 'parallel scaling work\n');
+
+  await Promise.all([
+    runCheckpointProcess({
+      cwd: afm,
+      homeDir: home,
+      id: 'afm-workflow',
+      current: 'AFM concurrent checkpoint landed.',
+      next: 'Continue AFM.',
+    }),
+    runCheckpointProcess({
+      cwd: scaling,
+      homeDir: home,
+      id: 'v5.3.8',
+      current: 'Scaling concurrent checkpoint landed.',
+      next: 'Continue scaling.',
+    }),
+  ]);
+
+  const notePath = path.join(vault, '02 Projects', 'project - spinlab.md');
+  const note = fs.readFileSync(notePath, 'utf8');
+  assert.match(unitText(note, 'afm-workflow'), /AFM concurrent checkpoint landed/);
+  assert.match(unitText(note, 'v5.3.8'), /Scaling concurrent checkpoint landed/);
 });
