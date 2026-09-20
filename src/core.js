@@ -92,7 +92,19 @@ export function repositoryFingerprint(repoRoot, exec = execFileSync) {
       const stat = fs.statSync(full);
       if (!stat.isFile()) continue;
       hash.update('\0UNTRACKED\0').update(rel).update('\0').update(String(stat.size)).update('\0');
-      if (stat.size <= 10 * 1024 * 1024) hash.update(fs.readFileSync(full));
+      const fd = fs.openSync(full, 'r');
+      try {
+        const buffer = Buffer.allocUnsafe(1024 * 1024);
+        let offset = 0;
+        while (offset < stat.size) {
+          const bytesRead = fs.readSync(fd, buffer, 0, Math.min(buffer.length, stat.size - offset), offset);
+          if (bytesRead <= 0) break;
+          hash.update(buffer.subarray(0, bytesRead));
+          offset += bytesRead;
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
     } catch {
       hash.update('\0MISSING\0').update(rel);
     }
@@ -275,11 +287,20 @@ export function beginRound({ cwd = process.cwd(), id, now = new Date(), exec = e
   return { repoRoot, session: runtime.activeSession, reused: false };
 }
 
-export function checkpoint({ cwd = process.cwd(), id, current, next = '', status, outcome, now = new Date(), exec = execFileSync } = {}) {
+export function checkpoint({
+  cwd = process.cwd(), id, current, next = '', status, outcome,
+  now = new Date(), exec = execFileSync, homeDir = os.homedir(),
+} = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   const state = loadState(repoRoot);
   const runtime = loadRuntime(repoRoot);
-  const task = findTask(state, id || runtime.activeSession?.taskId);
+  const explicitId = id == null ? null : clean(id, 'task id', { required: true, max: 120 });
+  if (runtime.activeSession && explicitId && explicitId !== runtime.activeSession.taskId) {
+    throw new Error(
+      `Cannot checkpoint task ${explicitId} while an uncheckpointed round is active for ${runtime.activeSession.taskId}`,
+    );
+  }
+  const task = findTask(state, runtime.activeSession?.taskId || explicitId || state.activeTaskId);
   const newCurrent = clean(current, 'current', { required: true, max: 2000 });
   const newNext = clean(next, 'next', { max: 2000 });
   const newStatus = canonicalStatus(status ?? task.status);
@@ -300,11 +321,17 @@ export function checkpoint({ cwd = process.cwd(), id, current, next = '', status
   state.activeTaskId = task.id;
   state.updatedAt = isoNow(now);
   writeState(repoRoot, state);
+
+  // Projection is part of the checkpoint transaction. If the configured
+  // Obsidian note lives inside this repository, write it before sealing the
+  // repository fingerprint so the gate observes the exact post-checkpoint tree.
+  const obsidian = syncObsidian({ cwd: repoRoot, homeDir, exec });
+
   const fingerprint = repositoryFingerprint(repoRoot, exec);
   runtime.lastCheckpoint = { taskId: task.id, at: isoNow(now), fingerprint };
   runtime.activeSession = null;
   writeRuntime(repoRoot, runtime);
-  return { repoRoot, task, state, runtime };
+  return { repoRoot, task, state, runtime, obsidian };
 }
 
 export function gateStatus({ cwd = process.cwd(), exec = execFileSync } = {}) {
