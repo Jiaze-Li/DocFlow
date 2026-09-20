@@ -447,6 +447,35 @@ export function ensureManagedContainer(existing) {
   return text;
 }
 
+function legacyUnitBounds(inner, taskId) {
+  const prefix = `## ${taskId} · `;
+  const matches = [];
+  let cursor = 0;
+  while (cursor < inner.length) {
+    const index = inner.indexOf(prefix, cursor);
+    if (index < 0) break;
+    const atLineStart = index === 0 || inner[index - 1] === '\n';
+    if (atLineStart) matches.push(index);
+    cursor = index + prefix.length;
+  }
+  if (matches.length > 1) {
+    throw new Error(`Refusing to migrate duplicate legacy DocFlow sections for ${taskId}`);
+  }
+  if (matches.length === 0) return null;
+
+  const start = matches[0];
+  const headingEnd = inner.indexOf('\n', start);
+  if (headingEnd < 0) throw new Error(`Malformed legacy DocFlow section for ${taskId}`);
+  const sectionBody = inner.slice(headingEnd + 1);
+  if (!sectionBody.trimStart().startsWith('**Task:**')) {
+    throw new Error(`Malformed legacy DocFlow section for ${taskId}`);
+  }
+
+  const nextHeading = inner.indexOf('\n## ', headingEnd + 1);
+  const end = nextHeading < 0 ? inner.length : nextHeading + 1;
+  return { start, end };
+}
+
 export function upsertManagedUnit(existing, task) {
   const normalized = validateTask(JSON.parse(JSON.stringify(task)));
   const unit = renderTaskUnit(normalized).trimEnd();
@@ -471,6 +500,14 @@ export function upsertManagedUnit(existing, task) {
   }
 
   let inner = text.slice(bounds.innerStart, bounds.endStart);
+  const legacy = legacyUnitBounds(inner, normalized.id);
+  if (legacy) {
+    const before = inner.slice(0, legacy.start).trimEnd();
+    const after = inner.slice(legacy.end).trimStart();
+    const migrated = [before, unit, after].filter(Boolean).join('\n\n');
+    return `${text.slice(0, bounds.innerStart)}\n${migrated}\n${text.slice(bounds.endStart)}`;
+  }
+
   inner = inner.replace(/\n?\s*_No DocFlow version\/task records yet\._\s*/g, '\n');
   if (!inner.includes(GENERATED_NOTICE)) {
     inner = `\n${GENERATED_NOTICE}\n${inner.trim()}\n`;
