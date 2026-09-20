@@ -1,0 +1,19 @@
+{
+  "name": "docflow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-agent development documentation workflow with automatic progress tracking and read-only Obsidian projection.",
+  "bin": {
+    "docflow": "bin/docflow.js"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "doctor": "node ./bin/docflow.js doctor",
+    "install-global": "node ./bin/install-global.js",
+    "setup": "node ./scripts/setup.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
