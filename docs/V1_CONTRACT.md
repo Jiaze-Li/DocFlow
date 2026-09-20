@@ -35,7 +35,7 @@ DocFlow must detect a pending delivery deterministically when a round is open or
 
 ## Obsidian v1
 
-Global machine config defines the Vault and project folder. Each enabled worktree/repository declares its target Project note. The note contains one outer `DOCFLOW:START/END` container and independently replaceable `DOCFLOW:UNIT:<id>:START/END` blocks. A checkpoint updates only the current unit block and preserves every other unit byte-for-byte. This permits multiple worktrees to project independent units into the same Project note without overwriting one another. Missing notes may be created as standard Markdown project notes.
+Global machine config defines the Vault and project folder. Each enabled worktree/repository declares its target Project note. The note contains one outer `DOCFLOW:START/END` container and independently replaceable `DOCFLOW:UNIT:<id>:START/END` blocks. A checkpoint updates only the current unit block and preserves every other unit byte-for-byte. This permits multiple worktrees to project independent units into the same Project note without overwriting one another. Project-note read/modify/write is serialized by a machine-local DocFlow lock so concurrent worktree checkpoints cannot lose one another's updates. Missing notes may be created as standard Markdown project notes.
 
 ## Cost
 
