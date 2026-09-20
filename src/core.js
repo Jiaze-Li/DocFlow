@@ -480,6 +480,55 @@ export function upsertManagedUnit(existing, task) {
   return `${text.slice(0, bounds.innerStart)}${appended}${text.slice(bounds.endStart)}`;
 }
 
+function sleepSync(milliseconds) {
+  const buffer = new SharedArrayBuffer(4);
+  Atomics.wait(new Int32Array(buffer), 0, 0, milliseconds);
+}
+
+function projectNoteLockPath(homeDir, target) {
+  const key = createHash('sha256').update(path.resolve(target)).digest('hex');
+  return path.join(homeDir, '.docflow', 'locks', `${key}.lock`);
+}
+
+function withProjectNoteLock(homeDir, target, fn, { timeoutMs = 5000, staleMs = 30000 } = {}) {
+  const lockPath = projectNoteLockPath(homeDir, target);
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
+  const startedAt = Date.now();
+  let descriptor = null;
+
+  while (descriptor == null) {
+    try {
+      descriptor = fs.openSync(lockPath, 'wx', 0o600);
+      fs.writeFileSync(descriptor, `${process.pid}\n`);
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      try {
+        const stat = fs.statSync(lockPath);
+        if (Date.now() - stat.mtimeMs > staleMs) {
+          fs.unlinkSync(lockPath);
+          continue;
+        }
+      } catch (statError) {
+        if (statError?.code === 'ENOENT') continue;
+        throw statError;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        throw new Error(`Timed out waiting for DocFlow Project note lock: ${target}`);
+      }
+      sleepSync(25);
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    try { fs.closeSync(descriptor); } catch { /* best effort */ }
+    try { fs.unlinkSync(lockPath); } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+}
+
 export function globalConfigPath(homeDir = os.homedir()) {
   return path.join(homeDir, '.docflow', 'config.json');
 }
@@ -526,19 +575,22 @@ export function syncObsidian({
   const allowedRoot = path.resolve(global.obsidian.vault, global.obsidian.projectFolder);
   if (target !== allowedRoot && !target.startsWith(`${allowedRoot}${path.sep}`)) throw new Error('Resolved Obsidian note escaped the configured project folder');
 
-  let created = false;
-  let existing = '';
-  if (fs.existsSync(target)) {
-    existing = fs.readFileSync(target, 'utf8');
-  } else {
-    created = true;
-    existing = `---\ntype: project\n---\n\n${projectSource ? `${projectSource}\n` : `# ${repoConfig.projectName}\n`}`;
-  }
-
-  let next = ensureManagedContainer(existing);
   const tasks = taskId == null ? state.tasks : [findTask(state, taskId)];
-  for (const task of tasks) next = upsertManagedUnit(next, task);
 
-  atomicWrite(target, next);
-  return { skipped: false, created, path: target, updatedTaskIds: tasks.map((task) => task.id) };
+  return withProjectNoteLock(homeDir, target, () => {
+    let created = false;
+    let existing = '';
+    if (fs.existsSync(target)) {
+      existing = fs.readFileSync(target, 'utf8');
+    } else {
+      created = true;
+      existing = `---\ntype: project\n---\n\n${projectSource ? `${projectSource}\n` : `# ${repoConfig.projectName}\n`}`;
+    }
+
+    let next = ensureManagedContainer(existing);
+    for (const task of tasks) next = upsertManagedUnit(next, task);
+
+    atomicWrite(target, next);
+    return { skipped: false, created, path: target, updatedTaskIds: tasks.map((task) => task.id) };
+  });
 }
