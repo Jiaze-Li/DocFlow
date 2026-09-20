@@ -5,8 +5,10 @@ import path from 'node:path';
 import {
   MANAGED_BEGIN,
   MANAGED_END,
+  beginRound,
   checkpoint,
   configureGlobal,
+  gateStatus,
   initRepo,
   startTask,
   syncObsidian,
@@ -57,4 +59,26 @@ test('missing Obsidian note is created as standard Markdown', () => {
 
 test('malformed managed markers fail closed', () => {
   assert.throws(() => upsertManagedBlock(`manual\n${MANAGED_BEGIN}\nbroken`, `${MANAGED_BEGIN}\nok\n${MANAGED_END}\n`), /malformed/);
+});
+
+
+test('checkpoint seals the fingerprint after an Obsidian projection inside the repository', () => {
+  const repo = tempGitRepo();
+  const home = tempHome();
+  configureGlobal({ homeDir: home, vault: repo, projectFolder: 'notes' });
+  initRepo({ cwd: repo, projectName: 'Demo', obsidianNote: 'project - demo.md' });
+  startTask({ cwd: repo, id: 'M1', title: 'In-repo projection', task: 'Keep the projection in the repo.' });
+  beginRound({ cwd: repo, id: 'M1' });
+  fs.appendFileSync(path.join(repo, 'app.txt'), 'meaningful work\n');
+
+  const result = checkpoint({
+    cwd: repo,
+    homeDir: home,
+    current: 'Meaningful work is complete.',
+    next: 'Continue with the next task.',
+  });
+
+  assert.equal(result.obsidian.skipped, false);
+  assert.equal(result.obsidian.path, path.join(repo, 'notes', 'project - demo.md'));
+  assert.equal(gateStatus({ cwd: repo }).status, 'READY');
 });
