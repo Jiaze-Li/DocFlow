@@ -94,3 +94,40 @@ test('repeating the same Current does not duplicate History', () => {
   checkpoint({ cwd: repo, current: 'Same fact.', next: 'Next B' });
   assert.equal(loadState(repo).tasks[0].history.length, 0);
 });
+
+
+test('checkpoint rejects an explicit task id that differs from the active round', () => {
+  const repo = tempGitRepo();
+  initRepo({ cwd: repo, projectName: 'Demo', obsidianNote: 'project - demo.md' });
+  startTask({ cwd: repo, id: 'A', title: 'Task A', task: 'Do A.', current: 'A started.' });
+  startTask({ cwd: repo, id: 'B', title: 'Task B', task: 'Do B.', current: 'B started.' });
+  beginRound({ cwd: repo, id: 'A' });
+  fs.appendFileSync(path.join(repo, 'app.txt'), 'work for A\n');
+
+  assert.throws(
+    () => checkpoint({ cwd: repo, id: 'B', current: 'Wrongly attributed work.', next: 'Bad next.' }),
+    /active for A/,
+  );
+
+  const gate = gateStatus({ cwd: repo });
+  assert.equal(gate.status, 'PENDING');
+  assert.equal(gate.taskId, 'A');
+  const state = loadState(repo);
+  assert.equal(state.tasks.find((task) => task.id === 'B').current, 'B started.');
+});
+
+test('same-size changes to large untracked files invalidate a checkpoint', () => {
+  const repo = tempGitRepo();
+  initRepo({ cwd: repo, projectName: 'Demo', obsidianNote: 'project - demo.md' });
+  startTask({ cwd: repo, id: 'M1', title: 'Large artifact', task: 'Track large repo work.' });
+  beginRound({ cwd: repo, id: 'M1' });
+
+  const artifact = path.join(repo, 'large.bin');
+  const size = 10 * 1024 * 1024 + 17;
+  fs.writeFileSync(artifact, Buffer.alloc(size, 0x41));
+  checkpoint({ cwd: repo, current: 'Large artifact was produced.', next: 'Inspect the result.' });
+  assert.equal(gateStatus({ cwd: repo }).status, 'READY');
+
+  fs.writeFileSync(artifact, Buffer.alloc(size, 0x42));
+  assert.equal(gateStatus({ cwd: repo }).status, 'PENDING');
+});
