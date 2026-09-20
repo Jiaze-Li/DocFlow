@@ -1,0 +1,44 @@
+# DocFlow v1 contract
+
+## Goal
+
+Provide one cross-agent development-documentation workflow that keeps repository-owned version/task progress current and exposes it read-only in Obsidian.
+
+## Ownership
+
+- The repository/Worker owns business meaning, task/version IDs, Project definition, Project principles, Current, and Next.
+- DocFlow owns the deterministic lifecycle: checkpoint timing, Current → History append, status fields, persistence, and Obsidian projection.
+- Obsidian is not a source of truth in v1.
+
+## Progress model
+
+Each version/task records:
+
+- Task
+- Started
+- Status: In progress / Waiting / Paused / Completed / Abandoned
+- Current
+- Next
+- History
+- Completed, when terminal
+- Outcome, when terminal
+
+History records past facts. Current records the present fact. Next records current intent. Old Next is never mechanically promoted to Current.
+
+## Checkpoint
+
+A checkpoint occurs after meaningful work and required validation/review, immediately before the Worker delivers that round to the user. Internal edits/commits/tests do not each create checkpoints.
+
+DocFlow must detect a pending delivery deterministically when a round is open or repository work changed after the last checkpoint. The gate does not call a model.
+
+## Obsidian v1
+
+Global machine config defines the Vault and project folder. Each repo declares only its target note name. DocFlow updates exactly one `DOCFLOW:START/END` managed block and preserves all content outside it. Missing notes may be created as standard Markdown project notes.
+
+## Cost
+
+DocFlow does not start a reviewer/summarizer model. The Worker supplies only short Current/Next/Status facts already known from the work it just completed.
+
+## Deferred
+
+Full technical-doc classification, Roadmap management, bidirectional Obsidian editing, automatic version selection, multi-user collaboration, and semantic repository understanding are outside v1.
