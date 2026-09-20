@@ -4,15 +4,16 @@ DocFlow is the shared development-documentation workflow. The current repository
 
 When a repository contains `.docflow/config.json`:
 
-1. Before a non-trivial development round, run:
-   `{{DOCFLOW_CLI}} begin --cwd <repo>`
-2. Do the work normally. Use the repository's own version/task ID. Never invent the next product version merely because DocFlow needs an ID.
-3. Run required tests/review first. If ReviewLoop is used, a meaningful `PHASE_PASS` or `PASS` is a good checkpoint boundary.
-4. Before telling the user that a meaningful round is delivered, run one DocFlow checkpoint with concise human-facing facts:
+1. Identify the repository-defined development unit for this round. Its ID may be a version (for example `v5.3.8`) or another repo-defined task ID (for example `afm-workflow`). Never invent or normalize IDs for DocFlow.
+2. Before a non-trivial development round, run:
+   `{{DOCFLOW_CLI}} begin --cwd <repo> --id <unit-id>`
+3. Do the work normally. Multiple units in the same Project may remain `In progress` at the same time.
+4. Run required tests/review first. If ReviewLoop is used, a meaningful `PHASE_PASS` or `PASS` is a good checkpoint boundary.
+5. Before telling the user that a meaningful round is delivered, run one DocFlow checkpoint for the same unit with concise human-facing facts:
    - `current`: what actually changed for the user/project;
    - `next`: the current plan, which may differ from the previous Next;
    - `status`: lifecycle state when it changed.
-5. Run `{{DOCFLOW_CLI}} gate --cwd <repo> --json`. Do not claim delivery while it reports `PENDING`.
+6. Run `{{DOCFLOW_CLI}} gate --cwd <repo> --json`. Do not claim delivery while it reports `PENDING`.
 
 Writing rules:
 - Use short functional language: “AFM first version can plot data”, not file/function/commit details.

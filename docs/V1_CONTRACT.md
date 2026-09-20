@@ -12,7 +12,7 @@ Provide one cross-agent development-documentation workflow that keeps repository
 
 ## Progress model
 
-Each version/task records:
+Each repository-defined development unit records:
 
 - Task
 - Started
@@ -25,6 +25,8 @@ Each version/task records:
 
 History records past facts. Current records the present fact. Next records current intent. Old Next is never mechanically promoted to Current.
 
+A Project may contain multiple simultaneously active units. Unit IDs are opaque to DocFlow: they may be versions such as `v5.3.8` or other repository-defined IDs such as `afm-workflow`.
+
 ## Checkpoint
 
 A checkpoint occurs after meaningful work and required validation/review, immediately before the Worker delivers that round to the user. Internal edits/commits/tests do not each create checkpoints.
@@ -33,7 +35,7 @@ DocFlow must detect a pending delivery deterministically when a round is open or
 
 ## Obsidian v1
 
-Global machine config defines the Vault and project folder. Each repo declares only its target note name. DocFlow updates exactly one `DOCFLOW:START/END` managed block and preserves all content outside it. Missing notes may be created as standard Markdown project notes.
+Global machine config defines the Vault and project folder. Each enabled worktree/repository declares its target Project note. The note contains one outer `DOCFLOW:START/END` container and independently replaceable `DOCFLOW:UNIT:<id>:START/END` blocks. A checkpoint updates only the current unit block and preserves every other unit byte-for-byte. This permits multiple worktrees to project independent units into the same Project note without overwriting one another. Project-note read/modify/write is serialized by a machine-local DocFlow lock so concurrent worktree checkpoints cannot lose one another's updates. Legacy whole-project task sections from the earlier v1 projection are migrated in place to unit blocks on first sync, rather than duplicated. Missing notes may be created as standard Markdown project notes.
 
 ## Cost
 
