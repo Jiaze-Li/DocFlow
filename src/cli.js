@@ -51,9 +51,11 @@ export async function runCli(argv = process.argv.slice(2), env = process.env) {
       print(beginRound({ cwd, id: opts.id }), Boolean(opts.json)); return 0;
     }
     case 'checkpoint': {
-      const result = checkpoint({ cwd, id: opts.id, current: opts.current, next: opts.next || '', status: opts.status, outcome: opts.outcome });
-      const sync = syncObsidian({ cwd: result.repoRoot, homeDir });
-      print({ task: result.task, gate: gateStatus({ cwd: result.repoRoot }), obsidian: sync }, Boolean(opts.json)); return 0;
+      const result = checkpoint({
+        cwd, id: opts.id, current: opts.current, next: opts.next || '',
+        status: opts.status, outcome: opts.outcome, homeDir,
+      });
+      print({ task: result.task, gate: gateStatus({ cwd: result.repoRoot }), obsidian: result.obsidian }, Boolean(opts.json)); return 0;
     }
     case 'gate': print(gateStatus({ cwd }), Boolean(opts.json)); return 0;
     case 'status': print(projectStatus({ cwd }), Boolean(opts.json)); return 0;
