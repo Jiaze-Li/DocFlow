@@ -35,6 +35,8 @@ Per-worktree runtime (active round and last checkpoint fingerprint) is stored un
 
 An earlier worktree-local `.docflow/state.json` layout must migrate losslessly into the durable branch before the legacy directory is removed.
 
+Each unit write is conditional on the unit revision observed before the mutable snapshot is loaded. If that revision changes before commit, the write fails closed as stale. This prevents same-unit lost updates while preserving independent writes to different units; DocFlow does not mechanically merge concurrent business facts.
+
 ## Checkpoint
 
 A checkpoint occurs after meaningful work and required validation/review, immediately before the Worker delivers that round to the user. Internal edits/commits/tests do not each create checkpoints.
