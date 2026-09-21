@@ -7,7 +7,7 @@ Provide one cross-agent development-documentation workflow that keeps repository
 ## Ownership
 
 - The repository/Worker owns business meaning, task/version IDs, Project definition, Project principles, Current, and Next.
-- DocFlow owns the deterministic lifecycle: checkpoint timing, Current → History append, status fields, persistence, and Obsidian projection.
+- DocFlow owns the deterministic lifecycle: checkpoint timing, Current → History append, status fields, durable persistence on the reserved `docflow-state` branch, and Obsidian projection.
 - Obsidian is not a source of truth in v1.
 
 ## Progress model
@@ -26,6 +26,16 @@ Each repository-defined development unit records:
 History records past facts. Current records the present fact. Next records current intent. Old Next is never mechanically promoted to Current.
 
 A Project may contain multiple simultaneously active units. Unit IDs are opaque to DocFlow: they may be versions such as `v5.3.8` or other repository-defined IDs such as `afm-workflow`.
+
+## Persistence
+
+Long-lived Project and unit state is stored on the repository's reserved `docflow-state` Git branch. Each unit is stored independently under `.docflow/units/<encoded-id>.json`. This branch is not a business-development branch and is not merged into feature branches.
+
+Per-worktree runtime (active round and last checkpoint fingerprint) is stored under that worktree's Git metadata and is intentionally ephemeral. Removing a worktree or deleting/merging its feature branch must not delete the durable unit History.
+
+An earlier worktree-local `.docflow/state.json` layout must migrate losslessly into the durable branch before the legacy directory is removed.
+
+Each unit write is conditional on the unit revision observed before the mutable snapshot is loaded. If that revision changes before commit, the write fails closed as stale. This prevents same-unit lost updates while preserving independent writes to different units; DocFlow does not mechanically merge concurrent business facts.
 
 ## Checkpoint
 

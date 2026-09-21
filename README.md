@@ -6,7 +6,7 @@ It solves one narrow v1 problem: **keep repository-owned project progress curren
 
 ## v1 model
 
-Each enabled repository keeps DocFlow state under `.docflow/`.
+Each enabled repository keeps durable DocFlow state on a reserved Git branch named `docflow-state`. Business branches/worktrees do not own the long-lived progress record.
 
 A development unit records:
 
@@ -49,15 +49,21 @@ node /path/to/DocFlow/bin/docflow.js init \
   --note "project - spinlab.md"
 ```
 
-This creates:
+This creates/updates the reserved state branch:
 
 ```text
-.docflow/
-  config.json     repo opt-in + Obsidian note name
-  project.md      user/Worker-owned Project definition and principles
-  state.json      canonical version/task progress
-  runtime.json    technical checkpoint state
+docflow-state
+└── .docflow/
+    ├── config.json
+    ├── project.md
+    └── units/
+        ├── afm-workflow.json
+        └── v5.3.8.json
 ```
+
+Each worktree keeps only ephemeral runtime under its own Git metadata (for example `.git/worktrees/<name>/docflow/runtime.json`). Deleting a feature worktree or branch therefore does not delete its DocFlow History.
+
+Legacy worktree-local `.docflow/state.json` data from the earlier v1 implementation is migrated into `docflow-state` by running `docflow init` again in that worktree; the old worktree-local directory is removed only after a successful migration.
 
 DocFlow never chooses or normalizes business IDs. A development unit may use an existing version ID such as `v5.3.8` or another repository-defined ID such as `afm-workflow`. Multiple units may be `In progress` simultaneously.
 
@@ -91,7 +97,9 @@ DocFlow keeps one Project container and one independently replaceable block per 
 <!-- DOCFLOW:END -->
 ```
 
-A checkpoint patches only its own unit block. Other units and all manual content outside the outer DocFlow block are preserved. This allows separate worktrees to project independent progress into the same Obsidian Project note.
+A checkpoint first persists its unit on `docflow-state`, then patches only that unit's Obsidian block. Other units and all manual content outside the outer DocFlow block are preserved. Separate worktrees can therefore share one Project note without owning or overwriting one another's durable state.
+
+Same-unit writes use an optimistic revision precondition. If another worktree changes that unit after it was read, the stale checkpoint/start is rejected and must reload before retrying; DocFlow never auto-merges competing Current/Next/History facts.
 
 ## Task example
 
