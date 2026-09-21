@@ -456,9 +456,9 @@ function findTask(state, id) {
 
 export function beginRound({ cwd = process.cwd(), id, now = new Date(), exec = execFileSync } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
-  const state = loadState(repoRoot);
-  const runtime = loadRuntime(repoRoot);
-  const task = findTask(state, id);
+  const runtime = loadRuntime(repoRoot, exec);
+  const state = loadState(repoRoot, exec);
+  const task = findTask(state, id || runtime.activeTaskId);
   if (TERMINAL_STATUSES.has(task.status)) throw new Error(`Task ${task.id} is terminal (${task.status})`);
   const fingerprint = repositoryFingerprint(repoRoot, exec);
   if (runtime.activeSession) {
@@ -467,11 +467,9 @@ export function beginRound({ cwd = process.cwd(), id, now = new Date(), exec = e
     }
     throw new Error(`DocFlow already has an uncheckpointed round for ${runtime.activeSession.taskId}`);
   }
+  runtime.activeTaskId = task.id;
   runtime.activeSession = { taskId: task.id, startedAt: isoNow(now), baselineFingerprint: fingerprint };
-  writeRuntime(repoRoot, runtime);
-  state.activeTaskId = task.id;
-  state.updatedAt = isoNow(now);
-  writeState(repoRoot, state);
+  writeRuntime(repoRoot, runtime, exec);
   return { repoRoot, session: runtime.activeSession, reused: false };
 }
 
@@ -480,15 +478,15 @@ export function checkpoint({
   now = new Date(), exec = execFileSync, homeDir = os.homedir(),
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
-  const state = loadState(repoRoot);
-  const runtime = loadRuntime(repoRoot);
+  const runtime = loadRuntime(repoRoot, exec);
+  const state = loadState(repoRoot, exec);
   const explicitId = id == null ? null : clean(id, 'task id', { required: true, max: 120 });
   if (runtime.activeSession && explicitId && explicitId !== runtime.activeSession.taskId) {
     throw new Error(
       `Cannot checkpoint task ${explicitId} while an uncheckpointed round is active for ${runtime.activeSession.taskId}`,
     );
   }
-  const task = findTask(state, runtime.activeSession?.taskId || explicitId || state.activeTaskId);
+  const task = findTask(state, runtime.activeSession?.taskId || explicitId || runtime.activeTaskId);
   const newCurrent = clean(current, 'current', { required: true, max: 2000 });
   const newNext = clean(next, 'next', { max: 2000 });
   const newStatus = canonicalStatus(status ?? task.status);
@@ -506,9 +504,13 @@ export function checkpoint({
   } else if (outcome != null && String(outcome).trim()) {
     throw new Error('Outcome is only valid for a terminal task');
   }
-  state.activeTaskId = task.id;
-  state.updatedAt = isoNow(now);
-  writeState(repoRoot, state);
+
+  writeTaskUnit(repoRoot, task, {
+    updatedAt: isoNow(now),
+    homeDir,
+    exec,
+    message: `DocFlow: checkpoint ${task.id}`,
+  });
 
   // Projection is part of the checkpoint transaction. If the configured
   // Obsidian note lives inside this repository, write it before sealing the
@@ -516,16 +518,19 @@ export function checkpoint({
   const obsidian = syncObsidian({ cwd: repoRoot, homeDir, exec, taskId: task.id });
 
   const fingerprint = repositoryFingerprint(repoRoot, exec);
+  runtime.activeTaskId = task.id;
   runtime.lastCheckpoint = { taskId: task.id, at: isoNow(now), fingerprint };
   runtime.activeSession = null;
-  writeRuntime(repoRoot, runtime);
-  return { repoRoot, task, state, runtime, obsidian };
+  const savedRuntime = writeRuntime(repoRoot, runtime, exec);
+  return { repoRoot, task, state: loadState(repoRoot, exec), runtime: savedRuntime, obsidian };
 }
 
 export function gateStatus({ cwd = process.cwd(), exec = execFileSync } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
-  if (!loadRepoConfig(repoRoot)) return { repoRoot, enabled: false, status: 'DISABLED', reason: 'repository has no .docflow/config.json' };
-  const runtime = loadRuntime(repoRoot);
+  if (!loadRepoConfig(repoRoot, exec)) {
+    return { repoRoot, enabled: false, status: 'DISABLED', reason: `repository has no DocFlow durable state on ${STATE_BRANCH}` };
+  }
+  const runtime = loadRuntime(repoRoot, exec);
   const fingerprint = repositoryFingerprint(repoRoot, exec);
   if (runtime.activeSession) {
     return { repoRoot, enabled: true, status: 'PENDING', reason: `uncheckpointed round for ${runtime.activeSession.taskId}`, taskId: runtime.activeSession.taskId };
@@ -541,10 +546,17 @@ export function gateStatus({ cwd = process.cwd(), exec = execFileSync } = {}) {
 
 export function projectStatus({ cwd = process.cwd(), exec = execFileSync } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
-  const config = loadRepoConfig(repoRoot);
+  const config = loadRepoConfig(repoRoot, exec);
   if (!config) return { repoRoot, enabled: false, gate: gateStatus({ cwd: repoRoot, exec }) };
-  const state = loadState(repoRoot);
-  return { repoRoot, enabled: true, config, state, gate: gateStatus({ cwd: repoRoot, exec }) };
+  const state = loadState(repoRoot, exec);
+  return {
+    repoRoot,
+    enabled: true,
+    config,
+    state,
+    stateStore: stateStoreStatus(repoRoot, exec),
+    gate: gateStatus({ cwd: repoRoot, exec }),
+  };
 }
 
 function unitMarkerKey(taskId) {
@@ -790,12 +802,12 @@ export function syncObsidian({
   cwd = process.cwd(), homeDir = os.homedir(), exec = execFileSync, taskId = null,
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
-  const repoConfig = loadRepoConfig(repoRoot);
+  const repoConfig = loadRepoConfig(repoRoot, exec);
   if (!repoConfig) throw new Error('DocFlow is not enabled in this repository');
   const global = loadGlobalConfig(homeDir);
   if (!global) return { skipped: true, reason: 'global Obsidian location is not configured' };
-  const state = loadState(repoRoot);
-  const projectSource = fs.existsSync(repoPaths(repoRoot).project) ? fs.readFileSync(repoPaths(repoRoot).project, 'utf8').trim() : '';
+  const state = loadState(repoRoot, exec);
+  const projectSource = (readDurableProject(repoRoot, exec) || '').trim();
   const target = path.resolve(global.obsidian.vault, global.obsidian.projectFolder, repoConfig.obsidianNote);
   const allowedRoot = path.resolve(global.obsidian.vault, global.obsidian.projectFolder);
   if (target !== allowedRoot && !target.startsWith(`${allowedRoot}${path.sep}`)) throw new Error('Resolved Obsidian note escaped the configured project folder');
