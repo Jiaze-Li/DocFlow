@@ -99,6 +99,8 @@ DocFlow keeps one Project container and one independently replaceable block per 
 
 A checkpoint first persists its unit on `docflow-state`, then patches only that unit's Obsidian block. Other units and all manual content outside the outer DocFlow block are preserved. Separate worktrees can therefore share one Project note without owning or overwriting one another's durable state.
 
+Same-unit writes use an optimistic revision precondition. If another worktree changes that unit after it was read, the stale checkpoint/start is rejected and must reload before retrying; DocFlow never auto-merges competing Current/Next/History facts.
+
 ## Task example
 
 ```bash
