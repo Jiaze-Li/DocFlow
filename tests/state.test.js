@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -7,10 +8,11 @@ import {
   checkpoint,
   gateStatus,
   initRepo,
+  loadRuntime,
   loadState,
   startTask,
 } from '../src/core.js';
-import { tempGitRepo } from './helpers.js';
+import { tempGitRepo, tempHome } from './helpers.js';
 
 test('Current changes append old fact to History while Next is rewritten from reality', () => {
   const repo = tempGitRepo();
@@ -130,4 +132,111 @@ test('same-size changes to large untracked files invalidate a checkpoint', () =>
 
   fs.writeFileSync(artifact, Buffer.alloc(size, 0x42));
   assert.equal(gateStatus({ cwd: repo }).status, 'PENDING');
+});
+
+
+test('durable unit History survives feature worktree and branch deletion', () => {
+  const root = tempGitRepo();
+  const home = tempHome();
+  const parent = path.dirname(root);
+  const feature = path.join(parent, `${path.basename(root)}-afm-persistence`);
+  execFileSync('git', ['-C', root, 'worktree', 'add', '-q', '-b', 'afm-workflow', feature, 'HEAD']);
+
+  initRepo({
+    cwd: feature,
+    homeDir: home,
+    projectName: 'SpinLab',
+    obsidianNote: 'project - spinlab.md',
+  });
+  startTask({
+    cwd: feature,
+    homeDir: home,
+    id: 'afm-workflow',
+    title: 'AFM Plotting Workflow',
+    task: 'Add AFM plotting.',
+    current: 'AFM first version works.',
+    next: 'Refine the UI.',
+  });
+  beginRound({ cwd: feature, id: 'afm-workflow' });
+  fs.appendFileSync(path.join(feature, 'app.txt'), 'AFM work\n');
+  checkpoint({
+    cwd: feature,
+    homeDir: home,
+    id: 'afm-workflow',
+    current: 'AFM UI refinement is complete.',
+    next: 'Run regression tests.',
+  });
+
+  const before = loadState(feature).tasks.find((task) => task.id === 'afm-workflow');
+  assert.deepEqual(before.history.map((entry) => entry.text), ['AFM first version works.']);
+
+  execFileSync('git', ['-C', root, 'worktree', 'remove', '--force', feature]);
+  execFileSync('git', ['-C', root, 'branch', '-D', 'afm-workflow']);
+
+  const inspect = path.join(parent, `${path.basename(root)}-inspect-persistence`);
+  execFileSync('git', ['-C', root, 'worktree', 'add', '-q', '-b', 'inspect-docflow-state', inspect, 'HEAD']);
+
+  const after = loadState(inspect).tasks.find((task) => task.id === 'afm-workflow');
+  assert.equal(after.current, 'AFM UI refinement is complete.');
+  assert.equal(after.next, 'Run regression tests.');
+  assert.deepEqual(after.history.map((entry) => entry.text), ['AFM first version works.']);
+
+  const durable = execFileSync(
+    'git',
+    ['-C', root, 'show', 'docflow-state:.docflow/units/afm-workflow.json'],
+    { encoding: 'utf8' },
+  );
+  assert.match(durable, /AFM UI refinement is complete/);
+  assert.equal(execFileSync('git', ['-C', inspect, 'status', '--short', '.docflow'], { encoding: 'utf8' }), '');
+});
+
+test('legacy worktree-local state migrates losslessly and cleans the worktree', () => {
+  const repo = tempGitRepo();
+  const home = tempHome();
+  const legacyDir = path.join(repo, '.docflow');
+  fs.mkdirSync(legacyDir, { recursive: true });
+
+  fs.writeFileSync(path.join(legacyDir, 'config.json'), JSON.stringify({
+    schemaVersion: 1,
+    projectName: 'SpinLab',
+    obsidianNote: 'project - spinlab.md',
+  }, null, 2));
+  fs.writeFileSync(path.join(legacyDir, 'project.md'), '# SpinLab\n\n## Project\nLegacy project definition.\n');
+  fs.writeFileSync(path.join(legacyDir, 'state.json'), JSON.stringify({
+    schemaVersion: 1,
+    activeTaskId: 'afm-workflow',
+    tasks: [{
+      id: 'afm-workflow',
+      title: 'AFM Plotting Workflow',
+      task: 'Add AFM plotting.',
+      started: '2026-09-20T03:06:17.792Z',
+      status: 'In progress',
+      current: 'AFM UI is aligned.',
+      next: 'Run regression tests.',
+      history: [{ at: '2026-09-20T03:06:26.329Z', text: 'AFM first version can plot data.' }],
+      completed: null,
+      outcome: null,
+    }],
+    updatedAt: '2026-09-20T03:06:26.329Z',
+  }, null, 2));
+  fs.writeFileSync(path.join(legacyDir, 'runtime.json'), JSON.stringify({
+    schemaVersion: 1,
+    activeSession: null,
+    lastCheckpoint: null,
+  }, null, 2));
+
+  const result = initRepo({ cwd: repo, homeDir: home });
+  assert.equal(result.migratedLegacy, true);
+  assert.deepEqual(result.migratedTaskIds, ['afm-workflow']);
+  assert.equal(fs.existsSync(legacyDir), false);
+  assert.equal(execFileSync('git', ['-C', repo, 'status', '--short', '.docflow'], { encoding: 'utf8' }), '');
+
+  const task = loadState(repo).tasks.find((entry) => entry.id === 'afm-workflow');
+  assert.equal(task.current, 'AFM UI is aligned.');
+  assert.equal(task.next, 'Run regression tests.');
+  assert.deepEqual(task.history.map((entry) => entry.text), ['AFM first version can plot data.']);
+  assert.equal(loadRuntime(repo).activeTaskId, 'afm-workflow');
+
+  const project = execFileSync('git', ['-C', repo, 'show', 'docflow-state:.docflow/project.md'], { encoding: 'utf8' });
+  assert.match(project, /Legacy project definition/);
 });
