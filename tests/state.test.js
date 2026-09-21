@@ -135,6 +135,107 @@ test('same-size changes to large untracked files invalidate a checkpoint', () =>
 });
 
 
+test('stale concurrent checkpoint is rejected instead of overwriting Current and History', () => {
+  const repo = tempGitRepo();
+  const home = tempHome();
+  initRepo({ cwd: repo, homeDir: home, projectName: 'Demo', obsidianNote: 'project - demo.md' });
+  startTask({
+    cwd: repo,
+    homeDir: home,
+    id: 'shared',
+    title: 'Shared task',
+    task: 'Exercise same-unit concurrency.',
+    current: 'Initial fact.',
+    next: 'Initial next.',
+  });
+
+  let injected = false;
+  const interleavingExec = (command, args, options) => {
+    if (
+      !injected
+      && command === 'git'
+      && Array.isArray(args)
+      && args.includes('rev-parse')
+      && args.includes('--git-common-dir')
+    ) {
+      injected = true;
+      checkpoint({
+        cwd: repo,
+        homeDir: home,
+        id: 'shared',
+        current: 'Actor B checkpoint.',
+        next: 'B next.',
+      });
+    }
+    return execFileSync(command, args, options);
+  };
+
+  assert.throws(
+    () => checkpoint({
+      cwd: repo,
+      homeDir: home,
+      exec: interleavingExec,
+      id: 'shared',
+      current: 'Actor A stale checkpoint.',
+      next: 'A next.',
+    }),
+    /durable state changed concurrently.*reload state and retry/,
+  );
+  assert.equal(injected, true);
+
+  const task = loadState(repo).tasks.find((entry) => entry.id === 'shared');
+  assert.equal(task.current, 'Actor B checkpoint.');
+  assert.equal(task.next, 'B next.');
+  assert.deepEqual(task.history.map((entry) => entry.text), ['Initial fact.']);
+  assert.ok(!task.history.some((entry) => entry.text === 'Actor A stale checkpoint.'));
+});
+
+test('concurrent creation of the same task id fails closed', () => {
+  const repo = tempGitRepo();
+  const home = tempHome();
+  initRepo({ cwd: repo, homeDir: home, projectName: 'Demo', obsidianNote: 'project - demo.md' });
+
+  let injected = false;
+  const interleavingExec = (command, args, options) => {
+    if (
+      !injected
+      && command === 'git'
+      && Array.isArray(args)
+      && args.includes('rev-parse')
+      && args.includes('--git-common-dir')
+    ) {
+      injected = true;
+      startTask({
+        cwd: repo,
+        homeDir: home,
+        id: 'same-id',
+        title: 'Actor B task',
+        task: 'Created by actor B.',
+        current: 'B created this task.',
+      });
+    }
+    return execFileSync(command, args, options);
+  };
+
+  assert.throws(
+    () => startTask({
+      cwd: repo,
+      homeDir: home,
+      exec: interleavingExec,
+      id: 'same-id',
+      title: 'Actor A task',
+      task: 'Created from a stale missing snapshot.',
+      current: 'A should not overwrite B.',
+    }),
+    /durable state changed concurrently.*reload state and retry/,
+  );
+  assert.equal(injected, true);
+
+  const task = loadState(repo).tasks.find((entry) => entry.id === 'same-id');
+  assert.equal(task.title, 'Actor B task');
+  assert.equal(task.current, 'B created this task.');
+});
+
 test('durable unit History survives feature worktree and branch deletion', () => {
   const root = tempGitRepo();
   const home = tempHome();
