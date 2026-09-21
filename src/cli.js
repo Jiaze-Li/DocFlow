@@ -34,7 +34,7 @@ export async function runCli(argv = process.argv.slice(2), env = process.env) {
   const homeDir = env.HOME || os.homedir();
   switch (command) {
     case 'init': {
-      const result = initRepo({ cwd, projectName: opts.project, summary: opts.summary || '', obsidianNote: opts.note });
+      const result = initRepo({ cwd, projectName: opts.project, summary: opts.summary || '', obsidianNote: opts.note, homeDir });
       const sync = syncObsidian({ cwd: result.repoRoot, homeDir });
       print({ ...result, obsidian: sync }, Boolean(opts.json)); return 0;
     }
@@ -43,7 +43,7 @@ export async function runCli(argv = process.argv.slice(2), env = process.env) {
       print(result, Boolean(opts.json)); return 0;
     }
     case 'start': {
-      const result = startTask({ cwd, id: opts.id, title: opts.title, task: opts.task, current: opts.current || '', next: opts.next || '', status: opts.status || 'In progress' });
+      const result = startTask({ cwd, id: opts.id, title: opts.title, task: opts.task, current: opts.current || '', next: opts.next || '', status: opts.status || 'In progress', homeDir });
       const sync = syncObsidian({ cwd: result.repoRoot, homeDir, taskId: result.task.id });
       print({ task: result.task, obsidian: sync }, Boolean(opts.json)); return 0;
     }
