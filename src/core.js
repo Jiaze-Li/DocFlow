@@ -590,12 +590,18 @@ export function unitMarkers(taskId) {
   };
 }
 
+function displayDate(value) {
+  const text = String(value ?? '').trim();
+  const match = /^(\d{4}-\d{2}-\d{2})T/.exec(text);
+  return match ? match[1] : text;
+}
+
 export function renderTaskUnit(task) {
   const normalized = validateTask(JSON.parse(JSON.stringify(task)));
   const markers = unitMarkers(normalized.id);
   const lines = [markers.begin, `## ${normalized.id} · ${normalized.title}`, ''];
   lines.push(`**Task:** ${normalized.task}`);
-  lines.push(`**Started:** ${normalized.started}`);
+  lines.push(`**Started:** ${displayDate(normalized.started)}`);
   lines.push(`**Status:** ${normalized.status}`);
   lines.push('');
   lines.push('**Current**', normalized.current || '-', '');
@@ -606,7 +612,7 @@ export function renderTaskUnit(task) {
   } else {
     lines.push('-');
   }
-  if (normalized.completed) lines.push('', `**Completed:** ${normalized.completed}`);
+  if (normalized.completed) lines.push('', `**Completed:** ${displayDate(normalized.completed)}`);
   if (normalized.outcome) lines.push(`**Outcome:** ${normalized.outcome}`);
   lines.push(markers.end);
   return `${lines.join('\n')}\n`;
