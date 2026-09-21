@@ -26,6 +26,7 @@ jobs:
           node --check bin/install-global.js
           node --check scripts/setup.js
           node --check src/core.js
+          node --check src/state-store.js
           node --check src/install.js
           node --check src/doctor.js
           node --check src/cli.js
