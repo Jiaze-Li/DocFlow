@@ -299,25 +299,130 @@ function readDurableProject(repoRoot, exec = execFileSync) {
   return readStateFile(repoRoot, DURABLE_PROJECT_PATH, exec);
 }
 
-export function initRepo({ cwd = process.cwd(), projectName, summary = '', obsidianNote, now = new Date(), exec = execFileSync } = {}) {
-  const repoRoot = resolveRepoRoot(cwd, exec);
-  const paths = repoPaths(repoRoot);
-  if (fs.existsSync(paths.config)) return { repoRoot, alreadyInitialized: true, config: loadRepoConfig(repoRoot) };
-  const name = clean(projectName || path.basename(repoRoot), 'projectName', { required: true, max: 200 });
-  const note = safeNotePath(obsidianNote || `project - ${name.toLowerCase()}.md`);
-  fs.mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
-  atomicWrite(paths.config, `${JSON.stringify({ schemaVersion: SCHEMA_VERSION, projectName: name, obsidianNote: note }, null, 2)}\n`);
-  atomicWrite(paths.state, `${JSON.stringify(defaultState(), null, 2)}\n`);
-  atomicWrite(paths.runtime, `${JSON.stringify(defaultRuntime(), null, 2)}\n`);
-  const projectBody = `# ${name}\n\n## Project\n${clean(summary, 'summary', { max: 2000 }) || '-'}\n\n## Project principles\n-\n`;
-  atomicWrite(paths.project, projectBody);
-  return { repoRoot, alreadyInitialized: false, config: loadRepoConfig(repoRoot), initializedAt: isoNow(now) };
+function tasksEqual(a, b) {
+  const left = validateTask({ ...a, history: a.history.map((h) => ({ ...h })) });
+  const right = validateTask({ ...b, history: b.history.map((h) => ({ ...h })) });
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
-export function startTask({ cwd = process.cwd(), id, title, task, current = '', next = '', status = 'In progress', now = new Date(), exec = execFileSync } = {}) {
+export function initRepo({
+  cwd = process.cwd(), projectName, summary = '', obsidianNote,
+  now = new Date(), exec = execFileSync, homeDir = os.homedir(),
+} = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
-  if (!loadRepoConfig(repoRoot)) throw new Error('DocFlow is not enabled in this repository');
-  const state = loadState(repoRoot);
+  const paths = repoPaths(repoRoot);
+  const legacyConfig = fs.existsSync(paths.config)
+    ? normalizeRepoConfig(JSON.parse(fs.readFileSync(paths.config, 'utf8')))
+    : null;
+  const legacyState = fs.existsSync(paths.state)
+    ? validateState(JSON.parse(fs.readFileSync(paths.state, 'utf8')))
+    : null;
+  const legacyRuntime = fs.existsSync(paths.runtime)
+    ? validateRuntime({ activeTaskId: legacyState?.activeTaskId ?? null, ...JSON.parse(fs.readFileSync(paths.runtime, 'utf8')) })
+    : null;
+  const legacyProject = fs.existsSync(paths.project) ? fs.readFileSync(paths.project, 'utf8') : null;
+
+  const durableText = durableConfigText(repoRoot, exec);
+  const durableConfig = durableText == null ? null : normalizeRepoConfig(JSON.parse(durableText));
+  const storeBefore = stateStoreStatus(repoRoot, exec);
+  if (!durableConfig && storeBefore.readRef) {
+    throw new Error(`Reserved branch ${STATE_BRANCH} exists but does not contain a valid DocFlow config`);
+  }
+
+  const name = clean(
+    projectName || durableConfig?.projectName || legacyConfig?.projectName || path.basename(repoRoot),
+    'projectName',
+    { required: true, max: 200 },
+  );
+  const note = safeNotePath(
+    obsidianNote || durableConfig?.obsidianNote || legacyConfig?.obsidianNote || `project - ${name.toLowerCase()}.md`,
+  );
+  const desiredConfig = { schemaVersion: SCHEMA_VERSION, projectName: name, obsidianNote: note };
+
+  if (durableConfig) {
+    if (projectName && durableConfig.projectName !== name) throw new Error('Project name conflicts with durable DocFlow config');
+    if (obsidianNote && durableConfig.obsidianNote !== note) throw new Error('Obsidian note conflicts with durable DocFlow config');
+  } else {
+    const projectBody = legacyProject
+      || `# ${name}\n\n## Project\n${clean(summary, 'summary', { max: 2000 }) || '-'}\n\n## Project principles\n-\n`;
+    const files = {
+      [DURABLE_CONFIG_PATH]: `${JSON.stringify(desiredConfig, null, 2)}\n`,
+      [DURABLE_PROJECT_PATH]: projectBody.endsWith('\n') ? projectBody : `${projectBody}\n`,
+    };
+    if (legacyState) {
+      for (const task of legacyState.tasks) {
+        files[stateUnitPath(task.id)] = durableUnitText(task, legacyState.updatedAt || isoNow(now));
+      }
+    }
+    commitStateFiles({
+      repoRoot,
+      files,
+      message: 'DocFlow: initialize durable state',
+      homeDir,
+      exec,
+      allowCreate: true,
+    });
+  }
+
+  const migratedTaskIds = [];
+  if (legacyState && durableConfig) {
+    const files = {};
+    for (const task of legacyState.tasks) {
+      const unitPath = stateUnitPath(task.id);
+      const existing = readStateFile(repoRoot, unitPath, exec);
+      if (existing == null) {
+        files[unitPath] = durableUnitText(task, legacyState.updatedAt || isoNow(now));
+        migratedTaskIds.push(task.id);
+        continue;
+      }
+      const durableUnit = parseDurableUnit(existing, unitPath);
+      if (!tasksEqual(durableUnit.task, task)) {
+        throw new Error(`Legacy DocFlow unit conflicts with durable state: ${task.id}`);
+      }
+    }
+    if (Object.keys(files).length) {
+      commitStateFiles({
+        repoRoot,
+        files,
+        message: 'DocFlow: migrate legacy worktree units',
+        homeDir,
+        exec,
+        allowCreate: false,
+      });
+    }
+  } else if (legacyState) {
+    migratedTaskIds.push(...legacyState.tasks.map((task) => task.id));
+  }
+
+  const currentRuntimePath = runtimePath(repoRoot, exec);
+  if (!fs.existsSync(currentRuntimePath)) {
+    const migratedRuntime = legacyRuntime || defaultRuntime();
+    migratedRuntime.activeTaskId ??= legacyState?.activeTaskId ?? null;
+    writeRuntime(repoRoot, migratedRuntime, exec);
+  }
+
+  const hadLegacy = fs.existsSync(paths.dir);
+  if (hadLegacy) fs.rmSync(paths.dir, { recursive: true, force: true });
+
+  const config = loadRepoConfig(repoRoot, exec);
+  return {
+    repoRoot,
+    alreadyInitialized: Boolean(durableConfig),
+    config,
+    stateBranch: STATE_BRANCH,
+    migratedLegacy: hadLegacy,
+    migratedTaskIds,
+    initializedAt: isoNow(now),
+  };
+}
+
+export function startTask({
+  cwd = process.cwd(), id, title, task, current = '', next = '', status = 'In progress',
+  now = new Date(), exec = execFileSync, homeDir = os.homedir(),
+} = {}) {
+  const repoRoot = resolveRepoRoot(cwd, exec);
+  if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
+  const state = loadState(repoRoot, exec);
   const taskId = clean(id, 'task id', { required: true, max: 120 });
   if (state.tasks.some((entry) => entry.id === taskId)) throw new Error(`Task already exists: ${taskId}`);
   const entry = validateTask({
@@ -330,11 +435,16 @@ export function startTask({ cwd = process.cwd(), id, title, task, current = '', 
     next: clean(next, 'next', { max: 2000 }),
     history: [], completed: null, outcome: null,
   });
-  state.tasks.push(entry);
-  state.activeTaskId = taskId;
-  state.updatedAt = isoNow(now);
-  writeState(repoRoot, state);
-  return { repoRoot, task: entry, state };
+  writeTaskUnit(repoRoot, entry, {
+    updatedAt: isoNow(now),
+    homeDir,
+    exec,
+    message: `DocFlow: start ${taskId}`,
+  });
+  const runtime = loadRuntime(repoRoot, exec);
+  runtime.activeTaskId = taskId;
+  writeRuntime(repoRoot, runtime, exec);
+  return { repoRoot, task: entry, state: loadState(repoRoot, exec) };
 }
 
 function findTask(state, id) {
