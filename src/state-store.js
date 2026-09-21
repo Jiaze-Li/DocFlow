@@ -63,6 +63,12 @@ export function readStateFile(repoRoot, relativePath, exec = execFileSync) {
   return out === '' ? null : out;
 }
 
+export function stateFileRevision(repoRoot, relativePath, exec = execFileSync) {
+  const ref = stateReadRef(repoRoot, exec);
+  if (!ref) return null;
+  return revParse(repoRoot, `${ref}:${relativePath}`, exec);
+}
+
 export function listStateFiles(repoRoot, prefix, exec = execFileSync) {
   const ref = stateReadRef(repoRoot, exec);
   if (!ref) return [];
@@ -143,6 +149,7 @@ function identityEnv(repoRoot, exec = execFileSync) {
 export function commitStateFiles({
   repoRoot,
   files,
+  expectedFiles = null,
   message,
   homeDir = os.homedir(),
   exec = execFileSync,
@@ -150,10 +157,28 @@ export function commitStateFiles({
 } = {}) {
   if (!repoRoot) throw new Error('repoRoot is required');
   if (!files || typeof files !== 'object' || Array.isArray(files)) throw new Error('files map is required');
+  if (expectedFiles != null && (typeof expectedFiles !== 'object' || Array.isArray(expectedFiles))) {
+    throw new Error('expectedFiles map must be an object');
+  }
 
   return withStateLock(repoRoot, homeDir, exec, () => {
     let parent = ensureLocalStateRef(repoRoot, exec);
     if (!parent && !allowCreate) throw new Error(`DocFlow durable state branch does not exist: ${STATE_BRANCH}`);
+
+    if (expectedFiles) {
+      for (const [relativePath, expectedRevision] of Object.entries(expectedFiles)) {
+        if (!relativePath || path.posix.isAbsolute(relativePath) || relativePath.startsWith('../')) {
+          throw new Error(`Invalid DocFlow state path: ${relativePath}`);
+        }
+        const actualRevision = parent ? revParse(repoRoot, `${parent}:${relativePath}`, exec) : null;
+        const expected = expectedRevision == null ? null : String(expectedRevision).trim();
+        if (actualRevision !== expected) {
+          throw new Error(
+            `DocFlow durable state changed concurrently for ${relativePath}; reload state and retry`,
+          );
+        }
+      }
+    }
 
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docflow-index-'));
     const indexPath = path.join(tempDir, 'index');
