@@ -11,6 +11,7 @@ import {
   configureGlobal,
   gateStatus,
   initRepo,
+  loadState,
   startTask,
   syncObsidian,
   unitMarkers,
@@ -41,6 +42,42 @@ test('Obsidian sync preserves manual project content and updates only one manage
   assert.match(text, /## 5\.3\.8 · AFM plotting/);
   assert.match(text, /UI first revision is complete/);
   assert.match(text, /- First version plots data\./);
+});
+
+test('Obsidian projection shows compact lifecycle dates while durable state keeps ISO timestamps', () => {
+  const repo = tempGitRepo();
+  const home = tempHome();
+  const vault = path.join(home, 'PhD');
+  configureGlobal({ homeDir: home, vault, projectFolder: '02 Projects' });
+  initRepo({ cwd: repo, projectName: 'SpinLab', obsidianNote: 'project - spinlab.md' });
+
+  startTask({
+    cwd: repo,
+    id: 'v5.3.8',
+    title: '3ω Scaling vs Angle',
+    task: 'Track angle scaling.',
+    current: 'Work started.',
+    now: new Date('2026-09-20T03:06:20.245Z'),
+  });
+  checkpoint({
+    cwd: repo,
+    homeDir: home,
+    id: 'v5.3.8',
+    current: 'Work completed.',
+    status: 'Completed',
+    outcome: 'Merged',
+    now: new Date('2026-09-21T15:41:08.000Z'),
+  });
+
+  const note = fs.readFileSync(path.join(vault, '02 Projects', 'project - spinlab.md'), 'utf8');
+  assert.match(note, /\*\*Started:\*\* 2026-09-20/);
+  assert.match(note, /\*\*Completed:\*\* 2026-09-21/);
+  assert.doesNotMatch(note, /2026-09-20T03:06:20\.245Z/);
+  assert.doesNotMatch(note, /2026-09-21T15:41:08\.000Z/);
+
+  const task = loadState(repo).tasks.find((entry) => entry.id === 'v5.3.8');
+  assert.equal(task.started, '2026-09-20T03:06:20.245Z');
+  assert.equal(task.completed, '2026-09-21T15:41:08.000Z');
 });
 
 test('missing Obsidian note is created as standard Markdown', () => {
