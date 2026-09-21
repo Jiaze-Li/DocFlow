@@ -9,6 +9,7 @@ import {
   listStateFiles,
   readStateFile,
   runtimePath,
+  stateFileRevision,
   stateStoreStatus,
   stateUnitPath,
 } from './state-store.js';
@@ -284,12 +285,15 @@ function durableUnitText(task, updatedAt) {
 
 function writeTaskUnit(repoRoot, task, {
   updatedAt = isoNow(), homeDir = os.homedir(), exec = execFileSync, message = null,
+  expectedRevision = undefined,
 } = {}) {
+  const unitPath = stateUnitPath(task.id);
   return commitStateFiles({
     repoRoot,
     homeDir,
     exec,
-    files: { [stateUnitPath(task.id)]: durableUnitText(task, updatedAt) },
+    files: { [unitPath]: durableUnitText(task, updatedAt) },
+    expectedFiles: expectedRevision === undefined ? null : { [unitPath]: expectedRevision },
     message: message || `DocFlow: update ${task.id}`,
     allowCreate: false,
   });
@@ -422,9 +426,13 @@ export function startTask({
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
-  const state = loadState(repoRoot, exec);
   const taskId = clean(id, 'task id', { required: true, max: 120 });
-  if (state.tasks.some((entry) => entry.id === taskId)) throw new Error(`Task already exists: ${taskId}`);
+  const unitPath = stateUnitPath(taskId);
+  const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+  const state = loadState(repoRoot, exec);
+  if (expectedRevision != null || state.tasks.some((entry) => entry.id === taskId)) {
+    throw new Error(`Task already exists: ${taskId}`);
+  }
   const entry = validateTask({
     id: taskId,
     title: clean(title, 'task title', { required: true, max: 300 }),
@@ -440,6 +448,7 @@ export function startTask({
     homeDir,
     exec,
     message: `DocFlow: start ${taskId}`,
+    expectedRevision,
   });
   const runtime = loadRuntime(repoRoot, exec);
   runtime.activeTaskId = taskId;
@@ -479,14 +488,23 @@ export function checkpoint({
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   const runtime = loadRuntime(repoRoot, exec);
-  const state = loadState(repoRoot, exec);
   const explicitId = id == null ? null : clean(id, 'task id', { required: true, max: 120 });
   if (runtime.activeSession && explicitId && explicitId !== runtime.activeSession.taskId) {
     throw new Error(
       `Cannot checkpoint task ${explicitId} while an uncheckpointed round is active for ${runtime.activeSession.taskId}`,
     );
   }
-  const task = findTask(state, runtime.activeSession?.taskId || explicitId || runtime.activeTaskId);
+  const targetId = clean(
+    runtime.activeSession?.taskId || explicitId || runtime.activeTaskId,
+    'task id',
+    { required: true, max: 120 },
+  );
+  // Capture the unit revision before loading the mutable snapshot. If another
+  // actor advances the unit before this checkpoint commits, the CAS precondition
+  // below rejects the stale write instead of silently dropping Current/History.
+  const expectedRevision = stateFileRevision(repoRoot, stateUnitPath(targetId), exec);
+  const state = loadState(repoRoot, exec);
+  const task = findTask(state, targetId);
   const newCurrent = clean(current, 'current', { required: true, max: 2000 });
   const newNext = clean(next, 'next', { max: 2000 });
   const newStatus = canonicalStatus(status ?? task.status);
@@ -510,6 +528,7 @@ export function checkpoint({
     homeDir,
     exec,
     message: `DocFlow: checkpoint ${task.id}`,
+    expectedRevision,
   });
 
   // Projection is part of the checkpoint transaction. If the configured
