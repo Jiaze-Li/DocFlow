@@ -2,7 +2,11 @@
 
 DocFlow is the shared development-documentation workflow. The current repository owns its business meaning; DocFlow only standardizes progress recording.
 
-When a repository contains `.docflow/config.json`:
+At the start of a non-trivial development round in a git repository, run:
+   `{{DOCFLOW_CLI}} status --cwd <repo> --json`
+If it reports `enabled: false`, DocFlow is not enabled for that repository and no further DocFlow action is required.
+
+When DocFlow is enabled:
 
 1. Identify the repository-defined development unit for this round. Its ID may be a version (for example `v5.3.8`) or another repo-defined task ID (for example `afm-workflow`). Never invent or normalize IDs for DocFlow.
 2. Before a non-trivial development round, run:
@@ -23,4 +27,4 @@ Writing rules:
 - Do not invoke a separate LLM just to summarize progress.
 - `Completed` and `Abandoned` are terminal in v1; start a new task/version instead of silently reopening one.
 
-If DocFlow is not enabled in the repository, do nothing.
+Durable project/unit state lives on the repository's reserved `docflow-state` branch; per-worktree runtime is machine-local Git metadata. Do not create or maintain business progress in an untracked worktree `.docflow` directory.
