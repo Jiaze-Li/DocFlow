@@ -17,3 +17,18 @@ export function tempGitRepo() {
 export function tempHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'docflow-home-'));
 }
+
+export function tempBareGitRepo() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'docflow-remote-'));
+  execFileSync('git', ['init', '--bare', '-q', root]);
+  return root;
+}
+
+export function cloneGitRepo(remote) {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'docflow-clone-parent-'));
+  const root = path.join(parent, 'repo');
+  execFileSync('git', ['clone', '-q', remote, root]);
+  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
+  execFileSync('git', ['-C', root, 'config', 'user.name', 'DocFlow Test']);
+  return root;
+}
