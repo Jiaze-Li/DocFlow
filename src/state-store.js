@@ -56,6 +56,89 @@ export function ensureLocalStateRef(repoRoot, exec = execFileSync) {
   return remote;
 }
 
+function originUrl(repoRoot, exec = execFileSync) {
+  return git(repoRoot, ['remote', 'get-url', 'origin'], exec, { allowFailure: true }).trim() || null;
+}
+
+function isAncestor(repoRoot, ancestor, descendant, exec = execFileSync) {
+  try {
+    exec('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', ancestor, descendant], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function refreshRemoteStateRef(repoRoot, exec = execFileSync) {
+  if (!originUrl(repoRoot, exec)) return { configured: false, commit: null };
+
+  const advertised = git(
+    repoRoot,
+    ['ls-remote', '--heads', 'origin', STATE_REF],
+    exec,
+  ).trim();
+  if (!advertised) {
+    const stale = revParse(repoRoot, REMOTE_STATE_REF, exec);
+    if (stale) git(repoRoot, ['update-ref', '-d', REMOTE_STATE_REF, stale], exec);
+    return { configured: true, commit: null };
+  }
+
+  const remoteCommit = advertised.split(/\s+/)[0];
+  if (!/^[0-9a-f]{40}$/i.test(remoteCommit)) {
+    throw new Error(`Invalid origin/${STATE_BRANCH} commit advertised by Git`);
+  }
+
+  const tracked = revParse(repoRoot, REMOTE_STATE_REF, exec);
+  if (tracked !== remoteCommit) {
+    git(
+      repoRoot,
+      ['fetch', '--no-tags', 'origin', `${STATE_REF}:${REMOTE_STATE_REF}`],
+      exec,
+    );
+  }
+  return { configured: true, commit: remoteCommit };
+}
+
+function synchronizeStateParent(repoRoot, exec = execFileSync) {
+  const remote = refreshRemoteStateRef(repoRoot, exec);
+  let local = revParse(repoRoot, STATE_REF, exec);
+
+  if (!local && remote.commit) {
+    git(repoRoot, ['update-ref', STATE_REF, remote.commit], exec);
+    local = remote.commit;
+  } else if (local && remote.commit && local !== remote.commit) {
+    if (isAncestor(repoRoot, local, remote.commit, exec)) {
+      git(repoRoot, ['update-ref', STATE_REF, remote.commit, local], exec);
+      local = remote.commit;
+    } else if (!isAncestor(repoRoot, remote.commit, local, exec)) {
+      throw new Error(
+        `DocFlow durable state diverged from origin/${STATE_BRANCH}; refusing to merge or force-push automatically`,
+      );
+    }
+  }
+
+  return { parent: local, remoteConfigured: remote.configured, remoteCommit: remote.commit };
+}
+
+function pushStateCommit(repoRoot, commit, exec = execFileSync) {
+  if (!commit || !originUrl(repoRoot, exec)) return { pushed: false, remoteCommit: null };
+  try {
+    git(repoRoot, ['push', 'origin', `${commit}:${STATE_REF}`], exec);
+  } catch (error) {
+    throw new Error(
+      `DocFlow durable state push failed; local state was not advanced. `
+      + `The remote may have changed or be unavailable. Retry after refreshing; `
+      + `DocFlow never force-pushes ${STATE_BRANCH}. ${error.message}`,
+    );
+  }
+  git(repoRoot, ['update-ref', REMOTE_STATE_REF, commit], exec);
+  return { pushed: true, remoteCommit: commit };
+}
+
 export function readStateFile(repoRoot, relativePath, exec = execFileSync) {
   const ref = stateReadRef(repoRoot, exec);
   if (!ref) return null;
@@ -162,7 +245,8 @@ export function commitStateFiles({
   }
 
   return withStateLock(repoRoot, homeDir, exec, () => {
-    let parent = ensureLocalStateRef(repoRoot, exec);
+    const synchronized = synchronizeStateParent(repoRoot, exec);
+    const parent = synchronized.parent ?? ensureLocalStateRef(repoRoot, exec);
     if (!parent && !allowCreate) throw new Error(`DocFlow durable state branch does not exist: ${STATE_BRANCH}`);
 
     if (expectedFiles) {
@@ -206,15 +290,37 @@ export function commitStateFiles({
       const tree = git(repoRoot, ['write-tree'], exec, { env }).trim();
       if (parent) {
         const oldTree = git(repoRoot, ['rev-parse', `${parent}^{tree}`], exec).trim();
-        if (oldTree === tree) return { branch: STATE_BRANCH, commit: parent, changed: false };
+        if (oldTree === tree) {
+          const pushed = synchronized.remoteConfigured
+            ? pushStateCommit(repoRoot, parent, exec)
+            : { pushed: false, remoteCommit: null };
+          return {
+            branch: STATE_BRANCH,
+            commit: parent,
+            changed: false,
+            pushed: pushed.pushed,
+            remoteCommit: pushed.remoteCommit,
+          };
+        }
       }
 
       const args = ['commit-tree', tree, '-m', message || 'Update DocFlow state'];
       if (parent) args.push('-p', parent);
       const commit = git(repoRoot, args, exec, { env }).trim();
+
+      const pushed = synchronized.remoteConfigured
+        ? pushStateCommit(repoRoot, commit, exec)
+        : { pushed: false, remoteCommit: null };
+
       if (parent) git(repoRoot, ['update-ref', STATE_REF, commit, parent], exec);
       else git(repoRoot, ['update-ref', STATE_REF, commit], exec);
-      return { branch: STATE_BRANCH, commit, changed: true };
+      return {
+        branch: STATE_BRANCH,
+        commit,
+        changed: true,
+        pushed: pushed.pushed,
+        remoteCommit: pushed.remoteCommit,
+      };
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
