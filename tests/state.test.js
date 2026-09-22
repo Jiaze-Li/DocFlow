@@ -274,6 +274,90 @@ test('remote updates to other units are incorporated before an automatic push', 
   assert.match(remoteC, /C exists\./);
 });
 
+test('a remote advance during push is rejected without advancing local state', () => {
+  const first = tempGitRepo();
+  const remote = tempBareGitRepo();
+  const firstHome = tempHome();
+  attachOrigin(first, remote);
+
+  initRepo({ cwd: first, homeDir: firstHome, projectName: 'Demo', obsidianNote: 'project - demo.md' });
+  startTask({
+    cwd: first,
+    homeDir: firstHome,
+    id: 'A',
+    title: 'Task A',
+    task: 'Seed state.',
+    current: 'A exists.',
+  });
+
+  const second = cloneGitRepo(remote);
+  const secondHome = tempHome();
+  initRepo({ cwd: second, homeDir: secondHome });
+
+  const localBefore = execFileSync(
+    'git',
+    ['-C', first, 'rev-parse', 'refs/heads/docflow-state'],
+    { encoding: 'utf8' },
+  ).trim();
+
+  let injected = false;
+  const racingExec = (command, args, options) => {
+    if (
+      !injected
+      && command === 'git'
+      && Array.isArray(args)
+      && args.includes('push')
+      && args.includes('origin')
+    ) {
+      injected = true;
+      startTask({
+        cwd: second,
+        homeDir: secondHome,
+        id: 'B',
+        title: 'Remote task B',
+        task: 'Advance the remote during another actor push.',
+        current: 'B reached remote first.',
+      });
+    }
+    return execFileSync(command, args, options);
+  };
+
+  assert.throws(
+    () => startTask({
+      cwd: first,
+      homeDir: firstHome,
+      exec: racingExec,
+      id: 'C',
+      title: 'Local task C',
+      task: 'Lose the remote push race.',
+      current: 'C must not become local durable state after rejection.',
+    }),
+    /push failed.*never force-pushes docflow-state/s,
+  );
+  assert.equal(injected, true);
+
+  const localAfter = execFileSync(
+    'git',
+    ['-C', first, 'rev-parse', 'refs/heads/docflow-state'],
+    { encoding: 'utf8' },
+  ).trim();
+  assert.equal(localAfter, localBefore);
+
+  const remoteB = execFileSync(
+    'git',
+    ['--git-dir', remote, 'show', 'docflow-state:.docflow/units/B.json'],
+    { encoding: 'utf8' },
+  );
+  assert.match(remoteB, /B reached remote first\./);
+  assert.throws(
+    () => execFileSync(
+      'git',
+      ['--git-dir', remote, 'show', 'docflow-state:.docflow/units/C.json'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    ),
+  );
+});
+
 test('remote same-unit advancement makes a stale checkpoint fail closed', () => {
   const first = tempGitRepo();
   const remote = tempBareGitRepo();
