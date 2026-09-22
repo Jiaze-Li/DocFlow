@@ -12,7 +12,14 @@ import {
   loadState,
   startTask,
 } from '../src/core.js';
-import { tempGitRepo, tempHome } from './helpers.js';
+import { cloneGitRepo, tempBareGitRepo, tempGitRepo, tempHome } from './helpers.js';
+
+function attachOrigin(repo, remote) {
+  execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', remote]);
+  execFileSync('git', ['-C', repo, 'push', '-q', 'origin', 'HEAD:refs/heads/main']);
+  execFileSync('git', ['--git-dir', remote, 'symbolic-ref', 'HEAD', 'refs/heads/main']);
+}
+
 
 test('Current changes append old fact to History while Next is rewritten from reality', () => {
   const repo = tempGitRepo();
@@ -134,6 +141,166 @@ test('same-size changes to large untracked files invalidate a checkpoint', () =>
   assert.equal(gateStatus({ cwd: repo }).status, 'PENDING');
 });
 
+
+test('durable state writes auto-push to origin/docflow-state', () => {
+  const repo = tempGitRepo();
+  const remote = tempBareGitRepo();
+  const home = tempHome();
+  attachOrigin(repo, remote);
+
+  initRepo({ cwd: repo, homeDir: home, projectName: 'Demo', obsidianNote: 'project - demo.md' });
+  const initRemote = execFileSync(
+    'git',
+    ['--git-dir', remote, 'show', 'docflow-state:.docflow/config.json'],
+    { encoding: 'utf8' },
+  );
+  assert.match(initRemote, /"projectName": "Demo"/);
+
+  startTask({
+    cwd: repo,
+    homeDir: home,
+    id: 'M1',
+    title: 'Remote-backed task',
+    task: 'Verify automatic durable-state backup.',
+    current: 'Initial state.',
+  });
+  checkpoint({
+    cwd: repo,
+    homeDir: home,
+    id: 'M1',
+    current: 'Checkpoint reached remote state.',
+    next: 'Continue.',
+  });
+
+  const remoteUnit = execFileSync(
+    'git',
+    ['--git-dir', remote, 'show', 'docflow-state:.docflow/units/M1.json'],
+    { encoding: 'utf8' },
+  );
+  assert.match(remoteUnit, /Checkpoint reached remote state\./);
+
+  const local = execFileSync('git', ['-C', repo, 'rev-parse', 'refs/heads/docflow-state'], { encoding: 'utf8' }).trim();
+  const tracked = execFileSync('git', ['-C', repo, 'rev-parse', 'refs/remotes/origin/docflow-state'], { encoding: 'utf8' }).trim();
+  const remoteHead = execFileSync('git', ['--git-dir', remote, 'rev-parse', 'refs/heads/docflow-state'], { encoding: 'utf8' }).trim();
+  assert.equal(local, remoteHead);
+  assert.equal(tracked, remoteHead);
+});
+
+test('remote updates to other units are incorporated before an automatic push', () => {
+  const first = tempGitRepo();
+  const remote = tempBareGitRepo();
+  const firstHome = tempHome();
+  attachOrigin(first, remote);
+
+  initRepo({ cwd: first, homeDir: firstHome, projectName: 'Demo', obsidianNote: 'project - demo.md' });
+  startTask({
+    cwd: first,
+    homeDir: firstHome,
+    id: 'A',
+    title: 'Task A',
+    task: 'Create A.',
+    current: 'A exists.',
+  });
+
+  const second = cloneGitRepo(remote);
+  const secondHome = tempHome();
+  initRepo({ cwd: second, homeDir: secondHome });
+  startTask({
+    cwd: second,
+    homeDir: secondHome,
+    id: 'B',
+    title: 'Task B',
+    task: 'Create B.',
+    current: 'B exists.',
+  });
+
+  // first still has the pre-B local state. A write to a different unit must
+  // refresh origin/docflow-state, preserve B, and then append C.
+  startTask({
+    cwd: first,
+    homeDir: firstHome,
+    id: 'C',
+    title: 'Task C',
+    task: 'Create C.',
+    current: 'C exists.',
+  });
+
+  const state = loadState(first);
+  assert.deepEqual(state.tasks.map((task) => task.id).sort(), ['A', 'B', 'C']);
+
+  const remoteB = execFileSync(
+    'git',
+    ['--git-dir', remote, 'show', 'docflow-state:.docflow/units/B.json'],
+    { encoding: 'utf8' },
+  );
+  const remoteC = execFileSync(
+    'git',
+    ['--git-dir', remote, 'show', 'docflow-state:.docflow/units/C.json'],
+    { encoding: 'utf8' },
+  );
+  assert.match(remoteB, /B exists\./);
+  assert.match(remoteC, /C exists\./);
+});
+
+test('remote same-unit advancement makes a stale checkpoint fail closed', () => {
+  const first = tempGitRepo();
+  const remote = tempBareGitRepo();
+  const firstHome = tempHome();
+  attachOrigin(first, remote);
+
+  initRepo({ cwd: first, homeDir: firstHome, projectName: 'Demo', obsidianNote: 'project - demo.md' });
+  startTask({
+    cwd: first,
+    homeDir: firstHome,
+    id: 'shared',
+    title: 'Shared task',
+    task: 'Exercise cross-clone concurrency.',
+    current: 'Initial fact.',
+  });
+
+  const second = cloneGitRepo(remote);
+  const secondHome = tempHome();
+  initRepo({ cwd: second, homeDir: secondHome });
+
+  let injected = false;
+  const interleavingExec = (command, args, options) => {
+    if (
+      !injected
+      && command === 'git'
+      && Array.isArray(args)
+      && args.includes('rev-parse')
+      && args.includes('--git-common-dir')
+    ) {
+      injected = true;
+      checkpoint({
+        cwd: second,
+        homeDir: secondHome,
+        id: 'shared',
+        current: 'Remote actor checkpoint.',
+        next: 'Remote next.',
+      });
+    }
+    return execFileSync(command, args, options);
+  };
+
+  assert.throws(
+    () => checkpoint({
+      cwd: first,
+      homeDir: firstHome,
+      exec: interleavingExec,
+      id: 'shared',
+      current: 'Stale local checkpoint.',
+      next: 'Stale next.',
+    }),
+    /durable state changed concurrently.*reload state and retry/,
+  );
+  assert.equal(injected, true);
+
+  const task = loadState(first).tasks.find((entry) => entry.id === 'shared');
+  assert.equal(task.current, 'Remote actor checkpoint.');
+  assert.equal(task.next, 'Remote next.');
+  assert.deepEqual(task.history.map((entry) => entry.text), ['Initial fact.']);
+});
 
 test('stale concurrent checkpoint is rejected instead of overwriting Current and History', () => {
   const repo = tempGitRepo();
