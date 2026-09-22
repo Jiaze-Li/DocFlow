@@ -139,6 +139,15 @@ function pushStateCommit(repoRoot, commit, exec = execFileSync) {
   return { pushed: true, remoteCommit: commit };
 }
 
+export function refreshStateFromOrigin({
+  repoRoot,
+  homeDir = os.homedir(),
+  exec = execFileSync,
+} = {}) {
+  if (!repoRoot) throw new Error('repoRoot is required');
+  return withStateLock(repoRoot, homeDir, exec, () => synchronizeStateParent(repoRoot, exec));
+}
+
 export function readStateFile(repoRoot, relativePath, exec = execFileSync) {
   const ref = stateReadRef(repoRoot, exec);
   if (!ref) return null;
