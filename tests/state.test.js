@@ -186,6 +186,38 @@ test('durable state writes auto-push to origin/docflow-state', () => {
   assert.equal(tracked, remoteHead);
 });
 
+test('init discovers origin/docflow-state created after the clone was made', () => {
+  const first = tempGitRepo();
+  const remote = tempBareGitRepo();
+  attachOrigin(first, remote);
+
+  // Clone before DocFlow state exists, so this clone has no remote-tracking
+  // docflow-state ref yet.
+  const second = cloneGitRepo(remote);
+  const firstHome = tempHome();
+  const secondHome = tempHome();
+
+  initRepo({
+    cwd: first,
+    homeDir: firstHome,
+    projectName: 'Canonical Demo',
+    obsidianNote: 'project - canonical-demo.md',
+  });
+
+  const result = initRepo({ cwd: second, homeDir: secondHome });
+  assert.equal(result.alreadyInitialized, true);
+  assert.equal(result.config.projectName, 'Canonical Demo');
+  assert.equal(result.config.obsidianNote, 'project - canonical-demo.md');
+
+  const remoteConfig = execFileSync(
+    'git',
+    ['--git-dir', remote, 'show', 'docflow-state:.docflow/config.json'],
+    { encoding: 'utf8' },
+  );
+  assert.match(remoteConfig, /"projectName": "Canonical Demo"/);
+  assert.doesNotMatch(remoteConfig, /"projectName": "repo"/);
+});
+
 test('remote updates to other units are incorporated before an automatic push', () => {
   const first = tempGitRepo();
   const remote = tempBareGitRepo();
