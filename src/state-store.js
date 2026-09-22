@@ -127,7 +127,7 @@ function synchronizeStateParent(repoRoot, exec = execFileSync) {
 function pushStateCommit(repoRoot, commit, exec = execFileSync) {
   if (!commit || !originUrl(repoRoot, exec)) return { pushed: false, remoteCommit: null };
   try {
-    git(repoRoot, ['push', 'origin', `${commit}:${STATE_REF}`], exec);
+    git(repoRoot, ['-c', 'remote.origin.mirror=false', 'push', 'origin', `${commit}:${STATE_REF}`], exec);
   } catch (error) {
     throw new Error(
       `DocFlow durable state push failed; local state was not advanced. `
