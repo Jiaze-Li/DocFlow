@@ -367,6 +367,10 @@ export function initRepo({
     commitStateFiles({
       repoRoot,
       files,
+      expectedFiles: {
+        [DURABLE_CONFIG_PATH]: null,
+        [DURABLE_PROJECT_PATH]: null,
+      },
       message: 'DocFlow: initialize durable state',
       homeDir,
       exec,
