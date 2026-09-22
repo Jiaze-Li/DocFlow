@@ -652,6 +652,81 @@ test('durable unit History survives feature worktree and branch deletion', () =>
   assert.equal(execFileSync('git', ['-C', inspect, 'status', '--short', '.docflow'], { encoding: 'utf8' }), '');
 });
 
+test('legacy unit migration fails closed if the remote creates the same unit during migration', () => {
+  const first = tempGitRepo();
+  const remote = tempBareGitRepo();
+  const firstHome = tempHome();
+  attachOrigin(first, remote);
+
+  initRepo({
+    cwd: first,
+    homeDir: firstHome,
+    projectName: 'Demo',
+    obsidianNote: 'project - demo.md',
+  });
+
+  const second = cloneGitRepo(remote);
+  const secondHome = tempHome();
+  const legacyDir = path.join(second, '.docflow');
+  fs.mkdirSync(legacyDir, { recursive: true });
+  fs.writeFileSync(path.join(legacyDir, 'state.json'), JSON.stringify({
+    schemaVersion: 1,
+    activeTaskId: 'shared',
+    tasks: [{
+      id: 'shared',
+      title: 'Legacy shared task',
+      task: 'Migrate a legacy unit.',
+      started: '2026-09-20T03:06:17.792Z',
+      status: 'In progress',
+      current: 'Legacy local state.',
+      next: 'Legacy next.',
+      history: [],
+      completed: null,
+      outcome: null,
+    }],
+    updatedAt: '2026-09-20T03:06:26.329Z',
+  }, null, 2));
+
+  let commonDirCalls = 0;
+  let injected = false;
+  const racingExec = (command, args, options) => {
+    if (
+      command === 'git'
+      && Array.isArray(args)
+      && args.includes('rev-parse')
+      && args.includes('--git-common-dir')
+    ) {
+      commonDirCalls += 1;
+      if (!injected && commonDirCalls === 2) {
+        injected = true;
+        startTask({
+          cwd: first,
+          homeDir: firstHome,
+          id: 'shared',
+          title: 'Remote shared task',
+          task: 'Create the durable unit first.',
+          current: 'Remote actor reached durable state first.',
+        });
+      }
+    }
+    return execFileSync(command, args, options);
+  };
+
+  assert.throws(
+    () => initRepo({ cwd: second, homeDir: secondHome, exec: racingExec }),
+    /durable state changed concurrently.*\.docflow\/units\/shared\.json/s,
+  );
+  assert.equal(injected, true);
+
+  const remoteUnit = execFileSync(
+    'git',
+    ['--git-dir', remote, 'show', 'docflow-state:.docflow/units/shared.json'],
+    { encoding: 'utf8' },
+  );
+  assert.match(remoteUnit, /Remote actor reached durable state first\./);
+  assert.doesNotMatch(remoteUnit, /Legacy local state\./);
+});
+
 test('legacy worktree-local state migrates losslessly and cleans the worktree', () => {
   const repo = tempGitRepo();
   const home = tempHome();
