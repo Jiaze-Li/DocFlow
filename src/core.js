@@ -381,11 +381,13 @@ export function initRepo({
   const migratedTaskIds = [];
   if (legacyState && durableConfig) {
     const files = {};
+    const expectedFiles = {};
     for (const task of legacyState.tasks) {
       const unitPath = stateUnitPath(task.id);
       const existing = readStateFile(repoRoot, unitPath, exec);
       if (existing == null) {
         files[unitPath] = durableUnitText(task, legacyState.updatedAt || isoNow(now));
+        expectedFiles[unitPath] = null;
         migratedTaskIds.push(task.id);
         continue;
       }
@@ -398,6 +400,7 @@ export function initRepo({
       commitStateFiles({
         repoRoot,
         files,
+        expectedFiles,
         message: 'DocFlow: migrate legacy worktree units',
         homeDir,
         exec,
