@@ -8,6 +8,7 @@ import {
   commitStateFiles,
   listStateFiles,
   readStateFile,
+  refreshStateFromOrigin,
   runtimePath,
   stateFileRevision,
   stateStoreStatus,
@@ -325,6 +326,11 @@ export function initRepo({
     ? validateRuntime({ activeTaskId: legacyState?.activeTaskId ?? null, ...JSON.parse(fs.readFileSync(paths.runtime, 'utf8')) })
     : null;
   const legacyProject = fs.existsSync(paths.project) ? fs.readFileSync(paths.project, 'utf8') : null;
+
+  // A clone may predate creation of origin/docflow-state. Refresh it before
+  // deciding whether this repository is already initialized so we never
+  // reinitialize over durable state that exists only on the remote.
+  refreshStateFromOrigin({ repoRoot, homeDir, exec });
 
   const durableText = durableConfigText(repoRoot, exec);
   const durableConfig = durableText == null ? null : normalizeRepoConfig(JSON.parse(durableText));
