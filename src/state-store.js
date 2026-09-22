@@ -88,7 +88,7 @@ function refreshRemoteStateRef(repoRoot, exec = execFileSync) {
   }
 
   const remoteCommit = advertised.split(/\s+/)[0];
-  if (!/^[0-9a-f]{40}$/i.test(remoteCommit)) {
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(remoteCommit)) {
     throw new Error(`Invalid origin/${STATE_BRANCH} commit advertised by Git`);
   }
 
