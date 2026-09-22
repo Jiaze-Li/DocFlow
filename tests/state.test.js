@@ -186,6 +186,38 @@ test('durable state writes auto-push to origin/docflow-state', () => {
   assert.equal(tracked, remoteHead);
 });
 
+
+test('targeted state push overrides remote mirror mode without mirroring other refs', () => {
+  const repo = tempGitRepo();
+  const remote = tempBareGitRepo();
+  const home = tempHome();
+  attachOrigin(repo, remote);
+
+  execFileSync('git', ['-C', repo, 'branch', 'local-only']);
+  execFileSync('git', ['-C', repo, 'config', 'remote.origin.mirror', 'true']);
+
+  initRepo({
+    cwd: repo,
+    homeDir: home,
+    projectName: 'Mirror Demo',
+    obsidianNote: 'project - mirror-demo.md',
+  });
+
+  const remoteConfig = execFileSync(
+    'git',
+    ['--git-dir', remote, 'show', 'docflow-state:.docflow/config.json'],
+    { encoding: 'utf8' },
+  );
+  assert.match(remoteConfig, /"projectName": "Mirror Demo"/);
+
+  const mirroredLocalOnly = execFileSync(
+    'git',
+    ['--git-dir', remote, 'for-each-ref', '--format=%(refname)', 'refs/heads/local-only'],
+    { encoding: 'utf8' },
+  ).trim();
+  assert.equal(mirroredLocalOnly, '');
+});
+
 test('auto-push supports SHA-256 Git repositories', () => {
   const repo = tempGitRepo({ objectFormat: 'sha256' });
   const remote = tempBareGitRepo({ objectFormat: 'sha256' });
