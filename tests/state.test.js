@@ -186,6 +186,84 @@ test('durable state writes auto-push to origin/docflow-state', () => {
   assert.equal(tracked, remoteHead);
 });
 
+test('auto-push supports SHA-256 Git repositories', () => {
+  const repo = tempGitRepo({ objectFormat: 'sha256' });
+  const remote = tempBareGitRepo({ objectFormat: 'sha256' });
+  const home = tempHome();
+  attachOrigin(repo, remote);
+
+  initRepo({ cwd: repo, homeDir: home, projectName: 'SHA Demo', obsidianNote: 'project - sha-demo.md' });
+  startTask({
+    cwd: repo,
+    homeDir: home,
+    id: 'sha-unit',
+    title: 'SHA-256 state',
+    task: 'Verify SHA-256 object IDs are accepted.',
+    current: 'Published from a SHA-256 repository.',
+  });
+
+  const remoteUnit = execFileSync(
+    'git',
+    ['--git-dir', remote, 'show', 'docflow-state:.docflow/units/sha-unit.json'],
+    { encoding: 'utf8' },
+  );
+  assert.match(remoteUnit, /Published from a SHA-256 repository\./);
+});
+
+test('concurrent initialization fails closed instead of overwriting newly published state', () => {
+  const first = tempGitRepo();
+  const remote = tempBareGitRepo();
+  attachOrigin(first, remote);
+
+  // Both clones begin life before origin/docflow-state exists.
+  const second = cloneGitRepo(remote);
+  const firstHome = tempHome();
+  const secondHome = tempHome();
+
+  let lsRemoteCalls = 0;
+  let injected = false;
+  const racingExec = (command, args, options) => {
+    if (
+      command === 'git'
+      && Array.isArray(args)
+      && args.includes('ls-remote')
+      && args.includes('origin')
+    ) {
+      lsRemoteCalls += 1;
+      if (!injected && lsRemoteCalls === 2) {
+        injected = true;
+        initRepo({
+          cwd: first,
+          homeDir: firstHome,
+          projectName: 'Canonical Demo',
+          obsidianNote: 'project - canonical-demo.md',
+        });
+      }
+    }
+    return execFileSync(command, args, options);
+  };
+
+  assert.throws(
+    () => initRepo({
+      cwd: second,
+      homeDir: secondHome,
+      exec: racingExec,
+      projectName: 'Conflicting Demo',
+      obsidianNote: 'project - conflicting-demo.md',
+    }),
+    /durable state changed concurrently.*\.docflow\/config\.json/s,
+  );
+  assert.equal(injected, true);
+
+  const remoteConfig = execFileSync(
+    'git',
+    ['--git-dir', remote, 'show', 'docflow-state:.docflow/config.json'],
+    { encoding: 'utf8' },
+  );
+  assert.match(remoteConfig, /\"projectName\": \"Canonical Demo\"/);
+  assert.doesNotMatch(remoteConfig, /Conflicting Demo/);
+});
+
 test('init discovers origin/docflow-state created after the clone was made', () => {
   const first = tempGitRepo();
   const remote = tempBareGitRepo();
