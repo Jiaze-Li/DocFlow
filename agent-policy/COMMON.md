@@ -28,3 +28,4 @@ Writing rules:
 - `Completed` and `Abandoned` are terminal in v1; start a new task/version instead of silently reopening one.
 
 Durable project/unit state lives on the repository's reserved `docflow-state` branch; per-worktree runtime is machine-local Git metadata. Do not create or maintain business progress in an untracked worktree `.docflow` directory.
+When the repository has an `origin` remote, DocFlow automatically refreshes and safely pushes `docflow-state` during durable writes. Do not add a separate manual state-push step; if DocFlow reports a remote divergence/push failure, surface it and reconcile/retry rather than force-pushing.

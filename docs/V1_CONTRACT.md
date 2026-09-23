@@ -37,6 +37,8 @@ An earlier worktree-local `.docflow/state.json` layout must migrate losslessly i
 
 Each unit write is conditional on the unit revision observed before the mutable snapshot is loaded. If that revision changes before commit, the write fails closed as stale. This prevents same-unit lost updates while preserving independent writes to different units; DocFlow does not mechanically merge concurrent business facts.
 
+If an `origin` remote is configured, durable writes synchronize the remote state ref before mutation and automatically publish the resulting state commit to `origin/docflow-state`. Publication must be fast-forward only. DocFlow must never force-push or silently merge diverged state histories. A concurrent remote advance is either incorporated before the write when compatible or causes the operation to fail closed. The local state ref is not advanced for a newly created state commit until its remote push succeeds.
+
 ## Checkpoint
 
 A checkpoint occurs after meaningful work and required validation/review, immediately before the Worker delivers that round to the user. Internal edits/commits/tests do not each create checkpoints.

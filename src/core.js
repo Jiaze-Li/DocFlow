@@ -8,6 +8,7 @@ import {
   commitStateFiles,
   listStateFiles,
   readStateFile,
+  refreshStateFromOrigin,
   runtimePath,
   stateFileRevision,
   stateStoreStatus,
@@ -326,6 +327,11 @@ export function initRepo({
     : null;
   const legacyProject = fs.existsSync(paths.project) ? fs.readFileSync(paths.project, 'utf8') : null;
 
+  // A clone may predate creation of origin/docflow-state. Refresh it before
+  // deciding whether this repository is already initialized so we never
+  // reinitialize over durable state that exists only on the remote.
+  refreshStateFromOrigin({ repoRoot, homeDir, exec });
+
   const durableText = durableConfigText(repoRoot, exec);
   const durableConfig = durableText == null ? null : normalizeRepoConfig(JSON.parse(durableText));
   const storeBefore = stateStoreStatus(repoRoot, exec);
@@ -361,6 +367,10 @@ export function initRepo({
     commitStateFiles({
       repoRoot,
       files,
+      expectedFiles: {
+        [DURABLE_CONFIG_PATH]: null,
+        [DURABLE_PROJECT_PATH]: null,
+      },
       message: 'DocFlow: initialize durable state',
       homeDir,
       exec,
@@ -371,11 +381,13 @@ export function initRepo({
   const migratedTaskIds = [];
   if (legacyState && durableConfig) {
     const files = {};
+    const expectedFiles = {};
     for (const task of legacyState.tasks) {
       const unitPath = stateUnitPath(task.id);
       const existing = readStateFile(repoRoot, unitPath, exec);
       if (existing == null) {
         files[unitPath] = durableUnitText(task, legacyState.updatedAt || isoNow(now));
+        expectedFiles[unitPath] = null;
         migratedTaskIds.push(task.id);
         continue;
       }
@@ -388,6 +400,7 @@ export function initRepo({
       commitStateFiles({
         repoRoot,
         files,
+        expectedFiles,
         message: 'DocFlow: migrate legacy worktree units',
         homeDir,
         exec,

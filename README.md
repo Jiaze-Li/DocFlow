@@ -32,6 +32,7 @@ meaningful work begins
   -> implementation / tests / review
   -> docflow checkpoint (Current + Next + Status)
   -> old Current appends to History
+  -> docflow-state safely pushes to origin when configured
   -> Obsidian managed block refreshes
   -> docflow gate == READY
   -> Worker reports the round to the user
@@ -62,6 +63,8 @@ docflow-state
 ```
 
 Each worktree keeps only ephemeral runtime under its own Git metadata (for example `.git/worktrees/<name>/docflow/runtime.json`). Deleting a feature worktree or branch therefore does not delete its DocFlow History.
+
+When an `origin` remote exists, every durable-state write refreshes `origin/docflow-state` first and then pushes the new state commit automatically. Pushes are ordinary fast-forward pushes only: DocFlow never force-pushes the state branch. If the remote advances concurrently or diverges, the write fails closed and must be retried/reconciled instead of overwriting remote history. Repositories without an `origin` continue to work with local-only durable state.
 
 Legacy worktree-local `.docflow/state.json` data from the earlier v1 implementation is migrated into `docflow-state` by running `docflow init` again in that worktree; the old worktree-local directory is removed only after a successful migration.
 
