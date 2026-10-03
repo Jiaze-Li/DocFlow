@@ -154,6 +154,45 @@ export function defaultRuntime() {
   return { schemaVersion: SCHEMA_VERSION, activeTaskId: null, activeSession: null, lastCheckpoint: null };
 }
 
+function validateCommitProgress(commit) {
+  if (!commit || typeof commit !== 'object' || Array.isArray(commit)) throw new Error('Invalid commit progress event');
+  const sha = clean(commit.sha, 'commit.sha', { required: true, max: 64 });
+  if (!/^[0-9a-f]{7,64}$/i.test(sha)) throw new Error(`Invalid commit sha: ${sha}`);
+  const branch = clean(commit.branch, 'commit.branch', { required: true, max: 200 });
+  const timestamp = clean(commit.timestamp, 'commit.timestamp', { required: true, max: 80 });
+  const message = clean(commit.message, 'commit.message', { required: true, max: 2000 });
+  const summary = commit.summary == null ? null : clean(commit.summary, 'commit.summary', { max: 2000 });
+  return { sha, branch, timestamp, message, ...(summary ? { summary } : {}) };
+}
+
+function validatePullRequest(pr) {
+  if (!pr || typeof pr !== 'object' || Array.isArray(pr)) throw new Error('Invalid PR metadata');
+  const number = Number(pr.number);
+  if (!Number.isInteger(number) || number <= 0) throw new Error('Invalid PR number');
+  const state = clean(pr.state, 'pr.state', { required: true, max: 50 });
+  const title = pr.title == null ? null : clean(pr.title, 'pr.title', { max: 300 });
+  const url = pr.url == null ? null : clean(pr.url, 'pr.url', { max: 1000 });
+  const merged = Boolean(pr.merged);
+  const mergedAt = pr.mergedAt == null ? null : clean(pr.mergedAt, 'pr.mergedAt', { max: 80 });
+  const closedAt = pr.closedAt == null ? null : clean(pr.closedAt, 'pr.closedAt', { max: 80 });
+  return {
+    number,
+    state,
+    ...(title ? { title } : {}),
+    ...(url ? { url } : {}),
+    merged,
+    ...(mergedAt ? { mergedAt } : {}),
+    ...(closedAt ? { closedAt } : {}),
+  };
+}
+
+export function isDevelopmentBranch(branch) {
+  const name = String(branch ?? '').trim().replace(/^refs\/heads\//, '');
+  if (!name) return false;
+  const excluded = new Set(['main', 'master', STATE_BRANCH]);
+  return !excluded.has(name);
+}
+
 function validateTask(task) {
   if (!task || typeof task !== 'object' || Array.isArray(task)) throw new Error('Invalid DocFlow task');
   task.id = clean(task.id, 'task.id', { required: true, max: 120 });
@@ -170,6 +209,26 @@ function validateTask(task) {
   });
   task.completed = task.completed == null ? null : clean(task.completed, 'task.completed', { required: true, max: 80 });
   task.outcome = task.outcome == null ? null : clean(task.outcome, 'task.outcome', { required: true, max: 300 });
+
+  if (task.branch != null) {
+    task.branch = clean(task.branch, 'task.branch', { required: true, max: 200 });
+  }
+
+  if (task.commits != null) {
+    if (!Array.isArray(task.commits) || task.commits.length > 20000) throw new Error('Invalid DocFlow task commits');
+    const seenShas = new Set();
+    task.commits = task.commits.map((c) => {
+      const validated = validateCommitProgress(c);
+      if (seenShas.has(validated.sha)) throw new Error(`Duplicate commit SHA in task: ${validated.sha}`);
+      seenShas.add(validated.sha);
+      return validated;
+    });
+  }
+
+  if (task.pr != null) {
+    task.pr = validatePullRequest(task.pr);
+  }
+
   return task;
 }
 
@@ -555,6 +614,215 @@ export function checkpoint({
   runtime.activeSession = null;
   const savedRuntime = writeRuntime(repoRoot, runtime, exec);
   return { repoRoot, task, state: loadState(repoRoot, exec), runtime: savedRuntime, obsidian };
+}
+
+export function getBranchUnit(repoRoot, branch, exec = execFileSync) {
+  const branchName = clean(branch, 'branch', { required: true, max: 200 }).replace(/^refs\/heads\//, '');
+  const state = loadState(repoRoot, exec);
+  return state.tasks.find((t) => t.id === branchName || t.branch === branchName) || null;
+}
+
+export function createBranchUnit({
+  cwd = process.cwd(),
+  branch,
+  now = new Date(),
+  exec = execFileSync,
+  homeDir = os.homedir(),
+} = {}) {
+  const repoRoot = resolveRepoRoot(cwd, exec);
+  if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
+  const branchName = clean(branch, 'branch', { required: true, max: 200 }).replace(/^refs\/heads\//, '');
+  if (!isDevelopmentBranch(branchName)) {
+    throw new Error(`Branch '${branchName}' is not a development branch`);
+  }
+
+  const existing = getBranchUnit(repoRoot, branchName, exec);
+  if (existing) {
+    return { repoRoot, task: existing, created: false };
+  }
+
+  const unitPath = stateUnitPath(branchName);
+  const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+  const entry = validateTask({
+    id: branchName,
+    branch: branchName,
+    title: branchName,
+    task: `Development branch: ${branchName}`,
+    started: isoNow(now),
+    status: 'In progress',
+    current: '',
+    next: '',
+    history: [],
+    commits: [],
+    pr: null,
+    completed: null,
+    outcome: null,
+  });
+
+  writeTaskUnit(repoRoot, entry, {
+    updatedAt: isoNow(now),
+    homeDir,
+    exec,
+    message: `DocFlow: create branch unit ${branchName}`,
+    expectedRevision,
+  });
+
+  return { repoRoot, task: entry, created: true };
+}
+
+export function recordCommitProgress({
+  cwd = process.cwd(),
+  branch,
+  commit,
+  now = new Date(),
+  exec = execFileSync,
+  homeDir = os.homedir(),
+} = {}) {
+  const repoRoot = resolveRepoRoot(cwd, exec);
+  if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
+  const branchName = clean(branch, 'branch', { required: true, max: 200 }).replace(/^refs\/heads\//, '');
+  if (!isDevelopmentBranch(branchName)) {
+    return { repoRoot, ignored: true, reason: `Branch '${branchName}' is not a development branch` };
+  }
+
+  const validCommit = validateCommitProgress({ ...commit, branch: branchName });
+  const unitPath = stateUnitPath(branchName);
+  const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+
+  let task = getBranchUnit(repoRoot, branchName, exec);
+  let created = false;
+
+  if (!task) {
+    task = validateTask({
+      id: branchName,
+      branch: branchName,
+      title: branchName,
+      task: `Development branch: ${branchName}`,
+      started: validCommit.timestamp || isoNow(now),
+      status: 'In progress',
+      current: '',
+      next: '',
+      history: [],
+      commits: [],
+      pr: null,
+      completed: null,
+      outcome: null,
+    });
+    created = true;
+  } else {
+    task = JSON.parse(JSON.stringify(task));
+  }
+
+  task.commits = task.commits || [];
+  const existingCommit = task.commits.find((c) => c.sha === validCommit.sha);
+  if (existingCommit) {
+    return {
+      repoRoot,
+      task,
+      commit: existingCommit,
+      alreadyRecorded: true,
+      created: false,
+    };
+  }
+
+  task.commits.push(validCommit);
+
+  const newCurrent = validCommit.summary || validCommit.message;
+  if (task.current && task.current !== newCurrent) {
+    const last = task.history.at(-1)?.text;
+    if (last !== task.current) {
+      task.history.push({ at: validCommit.timestamp || isoNow(now), text: task.current });
+    }
+  }
+  task.current = newCurrent;
+
+  writeTaskUnit(repoRoot, task, {
+    updatedAt: isoNow(now),
+    homeDir,
+    exec,
+    message: `DocFlow: record commit ${validCommit.sha.slice(0, 7)} on ${branchName}`,
+    expectedRevision,
+  });
+
+  return {
+    repoRoot,
+    task,
+    commit: validCommit,
+    alreadyRecorded: false,
+    created,
+  };
+}
+
+export function recordPullRequestEvent({
+  cwd = process.cwd(),
+  branch,
+  pr,
+  now = new Date(),
+  exec = execFileSync,
+  homeDir = os.homedir(),
+} = {}) {
+  const repoRoot = resolveRepoRoot(cwd, exec);
+  if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
+  const branchName = clean(branch, 'branch', { required: true, max: 200 }).replace(/^refs\/heads\//, '');
+  if (!isDevelopmentBranch(branchName)) {
+    return { repoRoot, ignored: true, reason: `Branch '${branchName}' is not a development branch` };
+  }
+
+  const validPr = validatePullRequest(pr);
+  const unitPath = stateUnitPath(branchName);
+  const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+
+  let task = getBranchUnit(repoRoot, branchName, exec);
+  let created = false;
+
+  if (!task) {
+    task = validateTask({
+      id: branchName,
+      branch: branchName,
+      title: validPr.title || branchName,
+      task: `Development branch: ${branchName}`,
+      started: isoNow(now),
+      status: 'In progress',
+      current: '',
+      next: '',
+      history: [],
+      commits: [],
+      pr: validPr,
+      completed: null,
+      outcome: null,
+    });
+    created = true;
+  } else {
+    task = JSON.parse(JSON.stringify(task));
+  }
+
+  task.pr = { ...(task.pr || {}), ...validPr };
+
+  if (validPr.merged) {
+    task.status = 'Completed';
+    task.outcome = 'Merged';
+    task.completed ??= validPr.mergedAt || isoNow(now);
+  } else if (validPr.state === 'closed' && !validPr.merged) {
+    if (task.status !== 'Completed') {
+      task.status = 'Abandoned';
+      task.outcome = 'Closed without merge';
+      task.completed ??= validPr.closedAt || isoNow(now);
+    }
+  }
+
+  writeTaskUnit(repoRoot, task, {
+    updatedAt: isoNow(now),
+    homeDir,
+    exec,
+    message: `DocFlow: PR #${validPr.number} ${validPr.merged ? 'merged' : validPr.state} on ${branchName}`,
+    expectedRevision,
+  });
+
+  return {
+    repoRoot,
+    task,
+    created,
+  };
 }
 
 export function gateStatus({ cwd = process.cwd(), exec = execFileSync } = {}) {
