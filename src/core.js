@@ -661,13 +661,16 @@ export function createBranchUnit({
     throw new Error(`Branch '${branchName}' is not a development branch`);
   }
 
+  // Capture unit revision BEFORE checking existing state to prevent race conditions
+  // where a concurrent push event creates the unit and commits progress in between.
+  const unitPath = stateUnitPath(branchName);
+  const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+
   const existing = getBranchUnit(repoRoot, branchName, exec);
   if (existing) {
     return { repoRoot, task: existing, created: false };
   }
 
-  const unitPath = stateUnitPath(branchName);
-  const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
   const entry = validateTask({
     id: branchName,
     branch: branchName,
