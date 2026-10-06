@@ -154,12 +154,23 @@ export function defaultRuntime() {
   return { schemaVersion: SCHEMA_VERSION, activeTaskId: null, activeSession: null, lastCheckpoint: null };
 }
 
+function normalizeIsoDate(value, label, { required = false } = {}) {
+  const text = clean(value, label, { required, max: 80 });
+  if (!text) return null;
+  const d = new Date(text);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`${label} must be a valid ISO-8601 date string: ${text}`);
+  }
+  return text;
+}
+
 function validateCommitProgress(commit) {
   if (!commit || typeof commit !== 'object' || Array.isArray(commit)) throw new Error('Invalid commit progress event');
-  const sha = clean(commit.sha, 'commit.sha', { required: true, max: 64 });
-  if (!/^[0-9a-f]{7,64}$/i.test(sha)) throw new Error(`Invalid commit sha: ${sha}`);
+  const rawSha = clean(commit.sha, 'commit.sha', { required: true, max: 64 });
+  if (!/^[0-9a-f]{7,64}$/i.test(rawSha)) throw new Error(`Invalid commit sha: ${rawSha}`);
+  const sha = rawSha.toLowerCase();
   const branch = clean(commit.branch, 'commit.branch', { required: true, max: 200 });
-  const timestamp = clean(commit.timestamp, 'commit.timestamp', { required: true, max: 80 });
+  const timestamp = normalizeIsoDate(commit.timestamp, 'commit.timestamp', { required: true });
   const message = clean(commit.message, 'commit.message', { required: true, max: 2000 });
   const summary = commit.summary == null ? null : clean(commit.summary, 'commit.summary', { max: 2000 });
   return { sha, branch, timestamp, message, ...(summary ? { summary } : {}) };
@@ -172,15 +183,15 @@ function validatePullRequest(pr) {
   const state = clean(pr.state, 'pr.state', { required: true, max: 50 });
   const title = pr.title == null ? null : clean(pr.title, 'pr.title', { max: 300 });
   const url = pr.url == null ? null : clean(pr.url, 'pr.url', { max: 1000 });
-  const merged = Boolean(pr.merged);
-  const mergedAt = pr.mergedAt == null ? null : clean(pr.mergedAt, 'pr.mergedAt', { max: 80 });
-  const closedAt = pr.closedAt == null ? null : clean(pr.closedAt, 'pr.closedAt', { max: 80 });
+  const merged = pr.merged == null ? undefined : Boolean(pr.merged);
+  const mergedAt = pr.mergedAt == null ? null : normalizeIsoDate(pr.mergedAt, 'pr.mergedAt');
+  const closedAt = pr.closedAt == null ? null : normalizeIsoDate(pr.closedAt, 'pr.closedAt');
   return {
     number,
     state,
     ...(title ? { title } : {}),
     ...(url ? { url } : {}),
-    merged,
+    ...(merged !== undefined ? { merged } : {}),
     ...(mergedAt ? { mergedAt } : {}),
     ...(closedAt ? { closedAt } : {}),
   };
@@ -189,25 +200,25 @@ function validatePullRequest(pr) {
 export function isDevelopmentBranch(branch) {
   const name = String(branch ?? '').trim().replace(/^refs\/heads\//, '');
   if (!name) return false;
-  const excluded = new Set(['main', 'master', STATE_BRANCH]);
+  const excluded = new Set(['main', STATE_BRANCH]);
   return !excluded.has(name);
 }
 
 function validateTask(task) {
   if (!task || typeof task !== 'object' || Array.isArray(task)) throw new Error('Invalid DocFlow task');
-  task.id = clean(task.id, 'task.id', { required: true, max: 120 });
+  task.id = clean(task.id, 'task.id', { required: true, max: 200 });
   task.title = clean(task.title, 'task.title', { required: true, max: 300 });
   task.task = clean(task.task, 'task.task', { required: true, max: 2000 });
-  task.started = clean(task.started, 'task.started', { required: true, max: 80 });
+  task.started = normalizeIsoDate(task.started, 'task.started', { required: true });
   task.status = canonicalStatus(task.status);
   task.current = clean(task.current, 'task.current', { max: 2000 });
   task.next = clean(task.next, 'task.next', { max: 2000 });
   if (!Array.isArray(task.history) || task.history.length > 10000) throw new Error('Invalid DocFlow task history');
   task.history = task.history.map((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Invalid DocFlow history entry');
-    return { at: clean(entry.at, 'history.at', { required: true, max: 80 }), text: clean(entry.text, 'history.text', { required: true, max: 2000 }) };
+    return { at: normalizeIsoDate(entry.at, 'history.at', { required: true }), text: clean(entry.text, 'history.text', { required: true, max: 2000 }) };
   });
-  task.completed = task.completed == null ? null : clean(task.completed, 'task.completed', { required: true, max: 80 });
+  task.completed = task.completed == null ? null : normalizeIsoDate(task.completed, 'task.completed', { required: true });
   task.outcome = task.outcome == null ? null : clean(task.outcome, 'task.outcome', { required: true, max: 300 });
 
   if (task.branch != null) {
@@ -619,7 +630,21 @@ export function checkpoint({
 export function getBranchUnit(repoRoot, branch, exec = execFileSync) {
   const branchName = clean(branch, 'branch', { required: true, max: 200 }).replace(/^refs\/heads\//, '');
   const state = loadState(repoRoot, exec);
-  return state.tasks.find((t) => t.id === branchName || t.branch === branchName) || null;
+  return state.tasks.find((t) => t.branch === branchName || (t.id === branchName && t.branch == null)) || null;
+}
+
+export function findCommitInState(repoRoot, sha, exec = execFileSync) {
+  const targetSha = String(sha ?? '').trim().toLowerCase();
+  if (!targetSha) return null;
+  const state = loadState(repoRoot, exec);
+  for (const task of state.tasks) {
+    if (!Array.isArray(task.commits)) continue;
+    const found = task.commits.find((c) => c.sha.toLowerCase() === targetSha);
+    if (found) {
+      return { task, commit: found };
+    }
+  }
+  return null;
 }
 
 export function createBranchUnit({
@@ -686,6 +711,20 @@ export function recordCommitProgress({
   }
 
   const validCommit = validateCommitProgress({ ...commit, branch: branchName });
+
+  // Repository-wide commit SHA deduplication: if this SHA already exists in ANY unit,
+  // do not record duplicate progress entries anywhere in docflow-state.
+  const existingGlobally = findCommitInState(repoRoot, validCommit.sha, exec);
+  if (existingGlobally) {
+    return {
+      repoRoot,
+      task: existingGlobally.task,
+      commit: existingGlobally.commit,
+      alreadyRecorded: true,
+      created: false,
+    };
+  }
+
   const unitPath = stateUnitPath(branchName);
   const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
 
@@ -714,17 +753,6 @@ export function recordCommitProgress({
   }
 
   task.commits = task.commits || [];
-  const existingCommit = task.commits.find((c) => c.sha === validCommit.sha);
-  if (existingCommit) {
-    return {
-      repoRoot,
-      task,
-      commit: existingCommit,
-      alreadyRecorded: true,
-      created: false,
-    };
-  }
-
   task.commits.push(validCommit);
 
   const newCurrent = validCommit.summary || validCommit.message;
@@ -796,13 +824,21 @@ export function recordPullRequestEvent({
     task = JSON.parse(JSON.stringify(task));
   }
 
-  task.pr = { ...(task.pr || {}), ...validPr };
+  // Preserve existing merged state if already merged and incoming event is out-of-order
+  const wasAlreadyMerged = Boolean(task.pr?.merged || task.status === 'Completed');
+  const merged = validPr.merged !== undefined ? (validPr.merged || wasAlreadyMerged) : wasAlreadyMerged;
 
-  if (validPr.merged) {
+  task.pr = {
+    ...(task.pr || {}),
+    ...validPr,
+    merged,
+  };
+
+  if (merged) {
     task.status = 'Completed';
     task.outcome = 'Merged';
     task.completed ??= validPr.mergedAt || isoNow(now);
-  } else if (validPr.state === 'closed' && !validPr.merged) {
+  } else if (validPr.state === 'closed' && !merged) {
     if (task.status !== 'Completed') {
       task.status = 'Abandoned';
       task.outcome = 'Closed without merge';
@@ -814,7 +850,7 @@ export function recordPullRequestEvent({
     updatedAt: isoNow(now),
     homeDir,
     exec,
-    message: `DocFlow: PR #${validPr.number} ${validPr.merged ? 'merged' : validPr.state} on ${branchName}`,
+    message: `DocFlow: PR #${validPr.number} ${merged ? 'merged' : validPr.state} on ${branchName}`,
     expectedRevision,
   });
 
