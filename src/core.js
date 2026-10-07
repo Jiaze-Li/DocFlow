@@ -210,16 +210,16 @@ function validateTask(task) {
   task.id = clean(task.id, 'task.id', { required: true, max: 200 });
   task.title = clean(task.title, 'task.title', { required: true, max: 300 });
   task.task = clean(task.task, 'task.task', { required: true, max: 2000 });
-  task.started = normalizeIsoDate(task.started, 'task.started', { required: true });
+  task.started = clean(task.started, 'task.started', { required: true, max: 80 });
   task.status = canonicalStatus(task.status);
   task.current = clean(task.current, 'task.current', { max: 2000 });
   task.next = clean(task.next, 'task.next', { max: 2000 });
   if (!Array.isArray(task.history) || task.history.length > 10000) throw new Error('Invalid DocFlow task history');
   task.history = task.history.map((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Invalid DocFlow history entry');
-    return { at: normalizeIsoDate(entry.at, 'history.at', { required: true }), text: clean(entry.text, 'history.text', { required: true, max: 2000 }) };
+    return { at: clean(entry.at, 'history.at', { required: true, max: 80 }), text: clean(entry.text, 'history.text', { required: true, max: 2000 }) };
   });
-  task.completed = task.completed == null ? null : normalizeIsoDate(task.completed, 'task.completed', { required: true });
+  task.completed = task.completed == null ? null : clean(task.completed, 'task.completed', { required: true, max: 80 });
   task.outcome = task.outcome == null ? null : clean(task.outcome, 'task.outcome', { required: true, max: 300 });
 
   if (task.branch != null) {
@@ -648,6 +648,19 @@ export function findCommitInState(repoRoot, sha, exec = execFileSync) {
   return null;
 }
 
+function resolveMainCommitSha(repoRoot, exec = execFileSync) {
+  for (const ref of ['refs/heads/main^{commit}', 'refs/remotes/origin/main^{commit}']) {
+    const sha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', ref], exec, { allowFailure: true }).trim();
+    if (sha) return sha;
+  }
+  const symRef = gitOutput(repoRoot, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], exec, { allowFailure: true }).trim();
+  if (symRef) {
+    const sha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', `${symRef}^{commit}`], exec, { allowFailure: true }).trim();
+    if (sha) return sha;
+  }
+  return '';
+}
+
 export function createBranchUnit({
   cwd = process.cwd(),
   branch,
@@ -662,62 +675,76 @@ export function createBranchUnit({
     throw new Error(`Branch '${branchName}' is not a development branch`);
   }
 
-  // Capture unit revision BEFORE checking existing state to prevent race conditions
-  // where a concurrent push event creates the unit and commits progress in between.
-  const unitPath = stateUnitPath(branchName);
-  const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+  return withStateLock(repoRoot, homeDir, exec, () => {
+    const unitPath = stateUnitPath(branchName);
+    const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
 
-  const existing = getBranchUnit(repoRoot, branchName, exec);
-  if (existing) {
-    return { repoRoot, task: existing, created: false };
-  }
+    const existing = getBranchUnit(repoRoot, branchName, exec);
+    if (existing) {
+      return { repoRoot, task: existing, created: false };
+    }
 
-  // If the branch exists in Git, check if it has any commits that are not already recorded
-  // in DocFlow state. If every reachable commit is already recorded in durable state,
-  // do not create an empty redundant unit.
-  const tipSha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}^{commit}`], exec, { allowFailure: true }).trim();
-  if (tipSha) {
+    // A branch must exist in Git and possess commits beyond main before creating a durable unit.
+    // If the branch does not exist in git (tipSha is empty), or is freshly cut from main (no commits
+    // of its own beyond main), or its tip commit is already recorded in durable state,
+    // do not create an empty redundant unit.
+    const tipSha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}^{commit}`], exec, { allowFailure: true }).trim();
+    if (!tipSha) {
+      return { repoRoot, task: null, created: false };
+    }
+
+    const mainSha = resolveMainCommitSha(repoRoot, exec);
+    if (mainSha) {
+      try {
+        exec('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', tipSha, mainSha], { stdio: 'ignore' });
+        // tipSha is an ancestor of or equal to mainSha -> branch has no commits of its own beyond main
+        return { repoRoot, task: null, created: false };
+      } catch (e) {
+        // Exit code 1 means NOT ancestor; allow execution to proceed
+      }
+    }
+
     const tipRecorded = findCommitInState(repoRoot, tipSha, exec);
     if (tipRecorded) {
       return { repoRoot, task: tipRecorded.task, created: false };
     }
-  }
 
-  const entry = validateTask({
-    id: branchName,
-    branch: branchName,
-    title: branchName,
-    task: `Development branch: ${branchName}`,
-    started: isoNow(now),
-    status: 'In progress',
-    current: '',
-    next: '',
-    history: [],
-    commits: [],
-    pr: null,
-    completed: null,
-    outcome: null,
-  });
-
-  try {
-    writeTaskUnit(repoRoot, entry, {
-      updatedAt: isoNow(now),
-      homeDir,
-      exec,
-      message: `DocFlow: create branch unit ${branchName}`,
-      expectedRevision,
+    const entry = validateTask({
+      id: branchName,
+      branch: branchName,
+      title: branchName,
+      task: `Development branch: ${branchName}`,
+      started: isoNow(now),
+      status: 'In progress',
+      current: '',
+      next: '',
+      history: [],
+      commits: [],
+      pr: null,
+      completed: null,
+      outcome: null,
     });
-  } catch (error) {
-    if (error?.message && error.message.includes('DocFlow durable state changed concurrently for')) {
-      const latest = getBranchUnit(repoRoot, branchName, exec);
-      if (latest) {
-        return { repoRoot, task: latest, created: false };
-      }
-    }
-    throw error;
-  }
 
-  return { repoRoot, task: entry, created: true };
+    try {
+      writeTaskUnit(repoRoot, entry, {
+        updatedAt: isoNow(now),
+        homeDir,
+        exec,
+        message: `DocFlow: create branch unit ${branchName}`,
+        expectedRevision,
+      });
+    } catch (error) {
+      if (error?.message && error.message.includes('DocFlow durable state changed concurrently for')) {
+        const latest = getBranchUnit(repoRoot, branchName, exec);
+        if (latest) {
+          return { repoRoot, task: latest, created: false };
+        }
+      }
+      throw error;
+    }
+
+    return { repoRoot, task: entry, created: true };
+  });
 }
 
 export function recordCommitProgress({

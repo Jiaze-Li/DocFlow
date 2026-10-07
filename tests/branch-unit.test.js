@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import path from 'node:path';
 import {
   createBranchUnit,
@@ -29,6 +29,10 @@ test('isDevelopmentBranch accurately filters branches', () => {
 test('createBranchUnit creates a unit for a development branch and is idempotent', () => {
   const repo = tempGitRepo();
   initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+
+  // Create git branch with a commit beyond main
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feature/auth-recovery']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Feature work']);
 
   const res1 = createBranchUnit({ cwd: repo, branch: 'feature/auth-recovery' });
   assert.equal(res1.created, true);
@@ -199,6 +203,9 @@ test('supports branch names up to 200 characters without validation errors', () 
   initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
   const longBranch = 'feature/' + 'a'.repeat(150);
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', longBranch]);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Long branch commit']);
+
   const res = createBranchUnit({ cwd: repo, branch: longBranch });
   assert.equal(res.created, true);
   assert.equal(res.task.id, longBranch);
@@ -246,26 +253,69 @@ test('deterministic interleaving CAS race for identical commit SHA returns alrea
     message: 'Concurrent webhook payload commit',
   };
 
-  // Interleaving simulation:
   // Delivery 1 starts and completes recording
   const res1 = recordCommitProgress({ cwd: repo, branch: 'feat/race-sha', commit });
   assert.equal(res1.created, true);
   assert.equal(res1.alreadyRecorded, false);
 
-  // Delivery 2 was initiated concurrently before Delivery 1 committed, meaning
-  // it read an initial stale revision (null or older rev).
-  // We simulate Delivery 2 attempting writeTaskUnit with the stale revision:
-  // When recordCommitProgress encounters the CAS conflict, it re-reads state,
-  // discovers the identical SHA is now present, and resolves it as idempotent success.
-  const customExec = (cmd, args, opts) => {
-    // Intercept git rev-parse for expected revision check or simulate stale revision during run
+  // Delivery 2 encounters an actual CAS mismatch during commitStateFiles write.
+  // When recordCommitProgress catches the CAS conflict, it re-reads state, discovers
+  // that commitSha is now present in the state, and returns alreadyRecorded: true.
+  let revParseCountA = 0;
+  const casConflictWithSameShaExec = (cmd, args, opts) => {
+    if (cmd === 'git' && Array.isArray(args) && args.includes('rev-parse')) {
+      const target = args[args.length - 1];
+      if (typeof target === 'string' && target.endsWith(':.docflow/units/feat%2Frace-sha.json')) {
+        revParseCountA++;
+        if (revParseCountA === 3) {
+          // In commitStateFiles, return a mismatched actualRevision to trigger real CAS conflict
+          return 'stale-mismatched-revision\n';
+        }
+      }
+    }
     return execFileSync(cmd, args, opts);
   };
 
-  // Calling recordCommitProgress again now (or with stale expected revision) returns alreadyRecorded
-  const res2 = recordCommitProgress({ cwd: repo, branch: 'feat/race-sha', commit, exec: customExec });
+  const res2 = recordCommitProgress({
+    cwd: repo,
+    branch: 'feat/race-sha',
+    commit,
+    exec: casConflictWithSameShaExec,
+  });
   assert.equal(res2.created, false);
   assert.equal(res2.alreadyRecorded, true);
+
+  // Test that when a DIFFERENT commit encounters a real CAS conflict and the SHA is NOT in state,
+  // recordCommitProgress re-throws the true CAS conflict error.
+  let revParseCountB = 0;
+  const casConflictWithNewShaExec = (cmd, args, opts) => {
+    if (cmd === 'git' && Array.isArray(args) && args.includes('rev-parse')) {
+      const target = args[args.length - 1];
+      if (typeof target === 'string' && target.endsWith(':.docflow/units/feat%2Frace-sha.json')) {
+        revParseCountB++;
+        if (revParseCountB === 3) {
+          return 'stale-mismatched-revision\n';
+        }
+      }
+    }
+    return execFileSync(cmd, args, opts);
+  };
+
+  const differentCommit = {
+    sha: '2222222222222222222222222222222222222222',
+    timestamp: '2026-10-01T14:35:00.000Z',
+    message: 'Different commit payload',
+  };
+
+  assert.throws(
+    () => recordCommitProgress({
+      cwd: repo,
+      branch: 'feat/race-sha',
+      commit: differentCommit,
+      exec: casConflictWithNewShaExec,
+    }),
+    /DocFlow durable state changed concurrently for/
+  );
 
   const state = loadState(repo);
   const task = state.tasks.find((t) => t.id === 'feat/race-sha');
@@ -436,5 +486,85 @@ test('createBranchUnit skips creation when branch has no unique commits of its o
   assert.equal(state.tasks.length, 1);
   assert.equal(state.tasks[0].id, 'feat/base');
 });
+
+function runCommitProcess({ cwd, homeDir, branch, commit }) {
+  const coreUrl = new URL('../src/core.js', import.meta.url).href;
+  const script = [
+    `import { recordCommitProgress } from ${JSON.stringify(coreUrl)};`,
+    `const res = recordCommitProgress(${JSON.stringify({ cwd, homeDir, branch, commit })});`,
+    `process.stdout.write(JSON.stringify(res));`,
+  ].join('\n');
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code === 0) {
+        try {
+          resolve(JSON.parse(stdout));
+        } catch (e) {
+          resolve({ raw: stdout });
+        }
+      } else {
+        reject(new Error(`commit child failed (${code}): ${stderr}`));
+      }
+    });
+  });
+}
+
+test('multi-process concurrent deliveries across separate worktrees serialize cleanly under shared lock', async () => {
+  const root = tempGitRepo();
+  const parent = path.dirname(root);
+  const wtAlpha = path.join(parent, `${path.basename(root)}-wt-alpha`);
+  const wtBeta = path.join(parent, `${path.basename(root)}-wt-beta`);
+  execFileSync('git', ['-C', root, 'worktree', 'add', '-q', '-b', 'feature/worker-alpha', wtAlpha, 'HEAD']);
+  execFileSync('git', ['-C', root, 'worktree', 'add', '-q', '-b', 'feature/worker-beta', wtBeta, 'HEAD']);
+
+  const home = tempHome();
+  initRepo({ cwd: root, homeDir: home, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+
+  // Add work in both worktrees
+  execFileSync('git', ['-C', wtAlpha, 'commit', '--allow-empty', '-qm', 'Alpha worktree commit']);
+  const shaAlpha = execFileSync('git', ['-C', wtAlpha, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  execFileSync('git', ['-C', wtBeta, 'commit', '--allow-empty', '-qm', 'Beta worktree commit']);
+  const shaBeta = execFileSync('git', ['-C', wtBeta, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  // Concurrently deliver commits from distinct child processes targeting distinct worktrees
+  const [resAlpha, resBeta] = await Promise.all([
+    runCommitProcess({
+      cwd: wtAlpha,
+      homeDir: home,
+      branch: 'feature/worker-alpha',
+      commit: { sha: shaAlpha, timestamp: '2026-10-01T12:00:00.000Z', message: 'Alpha worktree commit' },
+    }),
+    runCommitProcess({
+      cwd: wtBeta,
+      homeDir: home,
+      branch: 'feature/worker-beta',
+      commit: { sha: shaBeta, timestamp: '2026-10-01T12:05:00.000Z', message: 'Beta worktree commit' },
+    }),
+  ]);
+
+  assert.equal(resAlpha.created, true);
+  assert.equal(resAlpha.alreadyRecorded, false);
+  assert.equal(resBeta.created, true);
+  assert.equal(resBeta.alreadyRecorded, false);
+
+  const state = loadState(root);
+  assert.equal(state.tasks.length, 2);
+  const taskAlpha = state.tasks.find((t) => t.id === 'feature/worker-alpha');
+  const taskBeta = state.tasks.find((t) => t.id === 'feature/worker-beta');
+  assert.ok(taskAlpha);
+  assert.ok(taskBeta);
+  assert.equal(taskAlpha.commits[0].sha, shaAlpha);
+  assert.equal(taskBeta.commits[0].sha, shaBeta);
+});
+
 
 
