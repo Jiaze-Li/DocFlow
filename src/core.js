@@ -661,6 +661,18 @@ function resolveMainCommitSha(repoRoot, exec = execFileSync) {
   return '';
 }
 
+function isCommitReachableFromMain(repoRoot, sha, exec = execFileSync) {
+  if (!sha) return false;
+  const mainSha = resolveMainCommitSha(repoRoot, exec);
+  if (!mainSha) return false;
+  try {
+    exec('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', sha, mainSha], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function createBranchUnit({
   cwd = process.cwd(),
   branch,
@@ -763,6 +775,12 @@ export function recordCommitProgress({
   }
 
   const validCommit = validateCommitProgress({ ...commit, branch: branchName });
+
+  // Check if commit is already reachable from main. Commits on main are never recorded as branch
+  // progress, and newly pushed branches whose tip or commits are already on main do not create units.
+  if (isCommitReachableFromMain(repoRoot, validCommit.sha, exec)) {
+    return { repoRoot, ignored: true, reason: `Commit ${validCommit.sha.slice(0, 7)} is already reachable from main` };
+  }
 
   const unitPath = stateUnitPath(branchName);
   const initialExpectedRevision = stateFileRevision(repoRoot, unitPath, exec);

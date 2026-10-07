@@ -244,7 +244,8 @@ test('recordPullRequestEvent merges PR metadata and handles out-of-order events 
 
 test('deterministic interleaving CAS race for identical commit SHA returns alreadyRecorded', () => {
   const repo = tempGitRepo();
-  initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+  const home = tempHome();
+  initRepo({ cwd: repo, homeDir: home, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
   const commitSha = 'f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2';
   const commit = {
@@ -253,22 +254,27 @@ test('deterministic interleaving CAS race for identical commit SHA returns alrea
     message: 'Concurrent webhook payload commit',
   };
 
-  // Delivery 1 starts and completes recording
-  const res1 = recordCommitProgress({ cwd: repo, branch: 'feat/race-sha', commit });
-  assert.equal(res1.created, true);
-  assert.equal(res1.alreadyRecorded, false);
+  // Interleaving simulation:
+  // Delivery 2 initiates while the unit and commit do not exist in state yet.
+  // Delivery 2's pre-lock check finds nothing in state.
+  // When Delivery 2 enters writeTaskUnit to commit, Delivery 1 commits the same commit first,
+  // causing Delivery 2 to experience an actual CAS mismatch in commitStateFiles.
+  // Delivery 2's catch block intercepts the CAS conflict, re-reads state, discovers
+  // that commitSha is now recorded, and recovers cleanly with alreadyRecorded: true.
+  let delivery1Committed = false;
+  let casConflictTriggered = false;
 
-  // Delivery 2 encounters an actual CAS mismatch during commitStateFiles write.
-  // When recordCommitProgress catches the CAS conflict, it re-reads state, discovers
-  // that commitSha is now present in the state, and returns alreadyRecorded: true.
-  let revParseCountA = 0;
-  const casConflictWithSameShaExec = (cmd, args, opts) => {
+  const interleavingCasExec = (cmd, args, opts) => {
     if (cmd === 'git' && Array.isArray(args) && args.includes('rev-parse')) {
       const target = args[args.length - 1];
       if (typeof target === 'string' && target.endsWith(':.docflow/units/feat%2Frace-sha.json')) {
-        revParseCountA++;
-        if (revParseCountA === 3) {
-          // In commitStateFiles, return a mismatched actualRevision to trigger real CAS conflict
+        // Target in commitStateFiles check is `${parent}:.docflow/units/feat%2Frace-sha.json`
+        if (!args.includes('refs/heads/docflow-state')) {
+          delivery1Committed = true;
+          // Delivery 1 commits commitSha in the background
+          recordCommitProgress({ cwd: repo, homeDir: home, branch: 'feat/race-sha', commit });
+          // Return a mismatched revision so Delivery 2's writeTaskUnit hits actual CAS conflict
+          casConflictTriggered = true;
           return 'stale-mismatched-revision\n';
         }
       }
@@ -278,10 +284,14 @@ test('deterministic interleaving CAS race for identical commit SHA returns alrea
 
   const res2 = recordCommitProgress({
     cwd: repo,
+    homeDir: home,
     branch: 'feat/race-sha',
     commit,
-    exec: casConflictWithSameShaExec,
+    exec: interleavingCasExec,
   });
+
+  assert.equal(delivery1Committed, true);
+  assert.equal(casConflictTriggered, true);
   assert.equal(res2.created, false);
   assert.equal(res2.alreadyRecorded, true);
 
@@ -310,6 +320,7 @@ test('deterministic interleaving CAS race for identical commit SHA returns alrea
   assert.throws(
     () => recordCommitProgress({
       cwd: repo,
+      homeDir: home,
       branch: 'feat/race-sha',
       commit: differentCommit,
       exec: casConflictWithNewShaExec,
@@ -566,5 +577,34 @@ test('multi-process concurrent deliveries across separate worktrees serialize cl
   assert.equal(taskBeta.commits[0].sha, shaBeta);
 });
 
+test('recordCommitProgress ignores commits that are already reachable from main', () => {
+  const repo = tempGitRepo();
+  initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
+  // Ensure 'main' branch exists pointing to HEAD (tempGitRepo may default to master)
+  execFileSync('git', ['-C', repo, 'branch', 'main', 'HEAD']);
 
+  // Commit on main
+  const mainCommitSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  // Create branch cut from main without new commits
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feature/from-main']);
+
+  // Attempt to record the main commit on the branch
+  const res = recordCommitProgress({
+    cwd: repo,
+    branch: 'feature/from-main',
+    commit: {
+      sha: mainCommitSha,
+      timestamp: '2026-10-01T12:00:00.000Z',
+      message: 'Commit from main',
+    },
+  });
+
+  assert.equal(res.ignored, true);
+  assert.match(res.reason, /already reachable from main/);
+
+  // State must not contain an empty or redundant unit
+  const state = loadState(repo);
+  assert.equal(state.tasks.length, 0);
+});
