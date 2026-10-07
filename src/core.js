@@ -672,6 +672,17 @@ export function createBranchUnit({
     return { repoRoot, task: existing, created: false };
   }
 
+  // If the branch exists in Git, check if it has any commits that are not already recorded
+  // in DocFlow state. If every reachable commit is already recorded in durable state,
+  // do not create an empty redundant unit.
+  const tipSha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}^{commit}`], exec, { allowFailure: true }).trim();
+  if (tipSha) {
+    const tipRecorded = findCommitInState(repoRoot, tipSha, exec);
+    if (tipRecorded) {
+      return { repoRoot, task: tipRecorded.task, created: false };
+    }
+  }
+
   const entry = validateTask({
     id: branchName,
     branch: branchName,
@@ -813,7 +824,7 @@ export function recordCommitProgress({
         homeDir,
         exec,
         message: `DocFlow: record commit ${validCommit.sha.slice(0, 7)} on ${branchName}`,
-        expectedRevision: initialExpectedRevision,
+        expectedRevision,
       });
     } catch (error) {
       if (error?.message && error.message.includes('DocFlow durable state changed concurrently for')) {

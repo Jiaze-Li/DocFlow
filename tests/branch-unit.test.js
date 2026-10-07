@@ -345,7 +345,7 @@ test('interleaved delivery of same commit SHA across different branches preserve
   assert.equal(allCommits[0].sha, commitSha);
 });
 
-test('CAS conflict without matching commit SHA retains true conflict error and does not swallow concurrent edits', () => {
+test('concurrent delivery interleaving serializes cleanly under lock without lost progress', () => {
   const repo = tempGitRepo();
   const home = tempHome();
   initRepo({ cwd: repo, homeDir: home, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
@@ -385,26 +385,56 @@ test('CAS conflict without matching commit SHA retains true conflict error and d
     return execFileSync(command, args, options);
   };
 
-  // Worker A attempts to record commit C. Since the unit was concurrently updated with commit B (not commit C),
-  // recordCommitProgress must NOT swallow the error and must throw the true CAS conflict error.
-  assert.throws(() => {
-    recordCommitProgress({
-      cwd: repo,
-      homeDir: home,
-      branch: 'feat/conflict-test',
-      commit: { sha: '3333333333333333333333333333333333333333', timestamp: '2026-10-01T10:10:00.000Z', message: 'Commit C' },
-      exec: interleavingExec,
-    });
-  }, /DocFlow durable state changed concurrently for/);
+  // Worker A attempts to record commit C. When Worker A acquires the lock, it re-reads
+  // the fresh unit state and revision, so commit C is cleanly appended without throwing CAS error.
+  const resC = recordCommitProgress({
+    cwd: repo,
+    homeDir: home,
+    branch: 'feat/conflict-test',
+    commit: { sha: '3333333333333333333333333333333333333333', timestamp: '2026-10-01T10:10:00.000Z', message: 'Commit C' },
+    exec: interleavingExec,
+  });
   assert.equal(injected, true);
+  assert.equal(resC.alreadyRecorded, false);
 
-  // Verify that commit B remains and commit C was not recorded
+  // Verify that all commits [A, B, C] are preserved in order
   const state = loadState(repo);
   const task = state.tasks.find((t) => t.id === 'feat/conflict-test');
   assert.ok(task);
   assert.deepEqual(task.commits.map((c) => c.sha), [
     '1111111111111111111111111111111111111111',
     '2222222222222222222222222222222222222222',
+    '3333333333333333333333333333333333333333',
   ]);
 });
+
+test('createBranchUnit skips creation when branch has no unique commits of its own', () => {
+  const repo = tempGitRepo();
+  initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+
+  // Get current HEAD sha in git
+  const headSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  // Record HEAD commit on feat/base
+  const commit1 = {
+    sha: headSha,
+    timestamp: '2026-10-01T12:00:00.000Z',
+    message: 'Base commit',
+  };
+  recordCommitProgress({ cwd: repo, branch: 'feat/base', commit: commit1 });
+
+  // Create git branch feat/child cut from HEAD (which is recorded on feat/base)
+  execFileSync('git', ['-C', repo, 'branch', 'feat/child', 'HEAD'], { stdio: 'ignore' });
+
+  // Now createBranchUnit for feat/child whose tip commit is already recorded in durable state
+  const res = createBranchUnit({ cwd: repo, branch: 'feat/child' });
+  assert.equal(res.created, false);
+  assert.equal(res.task.id, 'feat/base');
+
+  // Verify durable state still has only 1 task unit (no redundant unit created)
+  const state = loadState(repo);
+  assert.equal(state.tasks.length, 1);
+  assert.equal(state.tasks[0].id, 'feat/base');
+});
+
 
