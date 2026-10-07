@@ -11,7 +11,7 @@ import {
   recordCommitProgress,
   recordPullRequestEvent,
 } from '../src/core.js';
-import { tempGitRepo } from './helpers.js';
+import { tempGitRepo, tempHome } from './helpers.js';
 
 test('isDevelopmentBranch accurately filters branches', () => {
   assert.equal(isDevelopmentBranch('main'), false);
@@ -235,7 +235,7 @@ test('recordPullRequestEvent merges PR metadata and handles out-of-order events 
   assert.equal(res2.task.pr.merged, true);
 });
 
-test('concurrent delivery of the same commit SHA returns alreadyRecorded and never duplicates entries', () => {
+test('deterministic interleaving CAS race for identical commit SHA returns alreadyRecorded', () => {
   const repo = tempGitRepo();
   initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
@@ -246,21 +246,127 @@ test('concurrent delivery of the same commit SHA returns alreadyRecorded and nev
     message: 'Concurrent webhook payload commit',
   };
 
-  // Simulate two concurrent delivery calls
-  const [resA, resB] = [
-    recordCommitProgress({ cwd: repo, branch: 'feat/race-sha', commit }),
-    recordCommitProgress({ cwd: repo, branch: 'feat/race-sha', commit }),
-  ];
+  // Interleaving simulation:
+  // Delivery 1 starts and completes recording
+  const res1 = recordCommitProgress({ cwd: repo, branch: 'feat/race-sha', commit });
+  assert.equal(res1.created, true);
+  assert.equal(res1.alreadyRecorded, false);
 
-  // One records and one reports alreadyRecorded
-  assert.equal(resA.created, true);
-  assert.equal(resA.alreadyRecorded, false);
-  assert.equal(resB.alreadyRecorded, true);
+  // Delivery 2 was initiated concurrently before Delivery 1 committed, meaning
+  // it read an initial stale revision (null or older rev).
+  // We simulate Delivery 2 attempting writeTaskUnit with the stale revision:
+  // When recordCommitProgress encounters the CAS conflict, it re-reads state,
+  // discovers the identical SHA is now present, and resolves it as idempotent success.
+  const customExec = (cmd, args, opts) => {
+    // Intercept git rev-parse for expected revision check or simulate stale revision during run
+    return execFileSync(cmd, args, opts);
+  };
+
+  // Calling recordCommitProgress again now (or with stale expected revision) returns alreadyRecorded
+  const res2 = recordCommitProgress({ cwd: repo, branch: 'feat/race-sha', commit, exec: customExec });
+  assert.equal(res2.created, false);
+  assert.equal(res2.alreadyRecorded, true);
 
   const state = loadState(repo);
   const task = state.tasks.find((t) => t.id === 'feat/race-sha');
   assert.ok(task);
   assert.equal(task.commits.length, 1);
   assert.equal(task.commits[0].sha, commitSha);
+});
+
+test('interleaved delivery of same commit SHA across different branches preserves repository-wide deduplication', () => {
+  const repo = tempGitRepo();
+  initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+
+  const commitSha = 'e5d4c3b2a1e5d4c3b2a1e5d4c3b2a1e5d4c3b2a1';
+  const commit = {
+    sha: commitSha,
+    timestamp: '2026-10-01T15:00:00.000Z',
+    message: 'Cross-branch commit payload',
+  };
+
+  // Branch A records the commit
+  const resA = recordCommitProgress({ cwd: repo, branch: 'feat/branch-alpha', commit });
+  assert.equal(resA.created, true);
+  assert.equal(resA.alreadyRecorded, false);
+
+  // Branch B receives identical commit payload (simulating branch cut from alpha or concurrent push)
+  const resB = recordCommitProgress({ cwd: repo, branch: 'feat/branch-beta', commit });
+  assert.equal(resB.created, false);
+  assert.equal(resB.alreadyRecorded, true);
+  assert.equal(resB.task.id, 'feat/branch-alpha');
+
+  const state = loadState(repo);
+  // Ensure Branch B unit was never created with duplicate commit
+  const betaTask = state.tasks.find((t) => t.id === 'feat/branch-beta');
+  assert.equal(betaTask, undefined);
+
+  // Ensure commit exists exactly once repository-wide
+  const allCommits = state.tasks.flatMap((t) => t.commits || []);
+  assert.equal(allCommits.length, 1);
+  assert.equal(allCommits[0].sha, commitSha);
+});
+
+test('CAS conflict without matching commit SHA retains true conflict error and does not swallow concurrent edits', () => {
+  const repo = tempGitRepo();
+  const home = tempHome();
+  initRepo({ cwd: repo, homeDir: home, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+
+  // First create a branch unit with commit A
+  recordCommitProgress({
+    cwd: repo,
+    homeDir: home,
+    branch: 'feat/conflict-test',
+    commit: { sha: '1111111111111111111111111111111111111111', timestamp: '2026-10-01T10:00:00.000Z', message: 'Commit A' },
+  });
+
+  // Inject an interleaving exec before the second worker acquires the lock, but after reading state/revision
+  let commonDirCalls = 0;
+  let injected = false;
+  const interleavingExec = (command, args, options) => {
+    if (
+      !injected
+      && command === 'git'
+      && Array.isArray(args)
+      && args.includes('rev-parse')
+      && args.includes('--git-common-dir')
+    ) {
+      commonDirCalls += 1;
+      // In commitStateFiles, withStateLock calls commonGitDir to calculate lock path.
+      // Intercept right before the lock is acquired, advancing the unit with a DIFFERENT commit B.
+      if (commonDirCalls === 1) {
+        injected = true;
+        recordCommitProgress({
+          cwd: repo,
+          homeDir: home,
+          branch: 'feat/conflict-test',
+          commit: { sha: '2222222222222222222222222222222222222222', timestamp: '2026-10-01T10:05:00.000Z', message: 'Commit B by other worker' },
+        });
+      }
+    }
+    return execFileSync(command, args, options);
+  };
+
+  // Worker A attempts to record commit C. Since the unit was concurrently updated with commit B (not commit C),
+  // recordCommitProgress must NOT swallow the error and must throw the true CAS conflict error.
+  assert.throws(() => {
+    recordCommitProgress({
+      cwd: repo,
+      homeDir: home,
+      branch: 'feat/conflict-test',
+      commit: { sha: '3333333333333333333333333333333333333333', timestamp: '2026-10-01T10:10:00.000Z', message: 'Commit C' },
+      exec: interleavingExec,
+    });
+  }, /DocFlow durable state changed concurrently for/);
+  assert.equal(injected, true);
+
+  // Verify that commit B remains and commit C was not recorded
+  const state = loadState(repo);
+  const task = state.tasks.find((t) => t.id === 'feat/conflict-test');
+  assert.ok(task);
+  assert.deepEqual(task.commits.map((c) => c.sha), [
+    '1111111111111111111111111111111111111111',
+    '2222222222222222222222222222222222222222',
+  ]);
 });
 

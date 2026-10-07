@@ -687,13 +687,23 @@ export function createBranchUnit({
     outcome: null,
   });
 
-  writeTaskUnit(repoRoot, entry, {
-    updatedAt: isoNow(now),
-    homeDir,
-    exec,
-    message: `DocFlow: create branch unit ${branchName}`,
-    expectedRevision,
-  });
+  try {
+    writeTaskUnit(repoRoot, entry, {
+      updatedAt: isoNow(now),
+      homeDir,
+      exec,
+      message: `DocFlow: create branch unit ${branchName}`,
+      expectedRevision,
+    });
+  } catch (error) {
+    if (error?.message && error.message.includes('DocFlow durable state changed concurrently for')) {
+      const latest = getBranchUnit(repoRoot, branchName, exec);
+      if (latest) {
+        return { repoRoot, task: latest, created: false };
+      }
+    }
+    throw error;
+  }
 
   return { repoRoot, task: entry, created: true };
 }
@@ -781,13 +791,31 @@ export function recordCommitProgress({
   }
   task.current = newCurrent;
 
-  writeTaskUnit(repoRoot, task, {
-    updatedAt: isoNow(now),
-    homeDir,
-    exec,
-    message: `DocFlow: record commit ${validCommit.sha.slice(0, 7)} on ${branchName}`,
-    expectedRevision,
-  });
+  try {
+    writeTaskUnit(repoRoot, task, {
+      updatedAt: isoNow(now),
+      homeDir,
+      exec,
+      message: `DocFlow: record commit ${validCommit.sha.slice(0, 7)} on ${branchName}`,
+      expectedRevision,
+    });
+  } catch (error) {
+    if (error?.message && error.message.includes('DocFlow durable state changed concurrently for')) {
+      // Re-read latest state: check both the target branch unit and repository-wide units
+      const latestGlobal = findCommitInState(repoRoot, validCommit.sha, exec);
+      if (latestGlobal) {
+        return {
+          repoRoot,
+          task: latestGlobal.task,
+          commit: latestGlobal.commit,
+          alreadyRecorded: true,
+          created: false,
+        };
+      }
+    }
+    // If the latest state does NOT contain this SHA, retain the true CAS conflict error
+    throw error;
+  }
 
   return {
     repoRoot,
