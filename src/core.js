@@ -715,6 +715,10 @@ export function recordCommitProgress({
 
   const validCommit = validateCommitProgress({ ...commit, branch: branchName });
 
+  // Capture unit revision BEFORE checking existing state to prevent race conditions
+  const unitPath = stateUnitPath(branchName);
+  const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+
   // Repository-wide commit SHA deduplication: if this SHA already exists in ANY unit,
   // do not record duplicate progress entries anywhere in docflow-state.
   const existingGlobally = findCommitInState(repoRoot, validCommit.sha, exec);
@@ -727,9 +731,6 @@ export function recordCommitProgress({
       created: false,
     };
   }
-
-  const unitPath = stateUnitPath(branchName);
-  const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
 
   let task = getBranchUnit(repoRoot, branchName, exec);
   let created = false;
@@ -756,6 +757,19 @@ export function recordCommitProgress({
   }
 
   task.commits = task.commits || [];
+
+  // Double-check: re-check against the loaded unit's commits before appending
+  const alreadyInUnit = task.commits.find((c) => c.sha.toLowerCase() === validCommit.sha.toLowerCase());
+  if (alreadyInUnit) {
+    return {
+      repoRoot,
+      task,
+      commit: alreadyInUnit,
+      alreadyRecorded: true,
+      created: false,
+    };
+  }
+
   task.commits.push(validCommit);
 
   const newCurrent = validCommit.summary || validCommit.message;

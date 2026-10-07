@@ -235,3 +235,32 @@ test('recordPullRequestEvent merges PR metadata and handles out-of-order events 
   assert.equal(res2.task.pr.merged, true);
 });
 
+test('concurrent delivery of the same commit SHA returns alreadyRecorded and never duplicates entries', () => {
+  const repo = tempGitRepo();
+  initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+
+  const commitSha = 'f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2';
+  const commit = {
+    sha: commitSha,
+    timestamp: '2026-10-01T14:30:00.000Z',
+    message: 'Concurrent webhook payload commit',
+  };
+
+  // Simulate two concurrent delivery calls
+  const [resA, resB] = [
+    recordCommitProgress({ cwd: repo, branch: 'feat/race-sha', commit }),
+    recordCommitProgress({ cwd: repo, branch: 'feat/race-sha', commit }),
+  ];
+
+  // One records and one reports alreadyRecorded
+  assert.equal(resA.created, true);
+  assert.equal(resA.alreadyRecorded, false);
+  assert.equal(resB.alreadyRecorded, true);
+
+  const state = loadState(repo);
+  const task = state.tasks.find((t) => t.id === 'feat/race-sha');
+  assert.ok(task);
+  assert.equal(task.commits.length, 1);
+  assert.equal(task.commits[0].sha, commitSha);
+});
+
