@@ -650,6 +650,60 @@ test('multi-process concurrent deliveries across separate worktrees serialize cl
   assert.equal(taskBeta.commits[0].sha, shaBeta);
 });
 
+test('multi-process concurrent same-SHA deliveries across separate branches serialize and deduplicate repository-wide', async () => {
+  const root = tempGitRepo();
+  const parent = path.dirname(root);
+  const wt1 = path.join(parent, `${path.basename(root)}-wt-1`);
+  const wt2 = path.join(parent, `${path.basename(root)}-wt-2`);
+  execFileSync('git', ['-C', root, 'worktree', 'add', '-q', '-b', 'feature/shared-a', wt1, 'HEAD']);
+  execFileSync('git', ['-C', root, 'worktree', 'add', '-q', '-b', 'feature/shared-b', wt2, 'HEAD']);
+
+  const home = tempHome();
+  initRepo({ cwd: root, homeDir: home, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+
+  // Make a shared commit in worktree 1, then pull/reset worktree 2 to the same commit
+  execFileSync('git', ['-C', wt1, 'commit', '--allow-empty', '-qm', 'Shared commit across branches']);
+  const sharedSha = execFileSync('git', ['-C', wt1, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', wt2, 'reset', '--hard', sharedSha], { stdio: 'ignore' });
+
+  const commitPayload = {
+    sha: sharedSha,
+    timestamp: '2026-10-01T12:00:00.000Z',
+    message: 'Shared commit across branches',
+  };
+
+  // Launch two distinct Node processes concurrently attempting to record the EXACT SAME SHA to different branches
+  const [res1, res2] = await Promise.all([
+    runCommitProcess({
+      cwd: wt1,
+      homeDir: home,
+      branch: 'feature/shared-a',
+      commit: commitPayload,
+    }),
+    runCommitProcess({
+      cwd: wt2,
+      homeDir: home,
+      branch: 'feature/shared-b',
+      commit: commitPayload,
+    }),
+  ]);
+
+  // Under real process concurrency with shared locking and repository-wide SHA re-check:
+  // Exactly one process creates/records the commit; the other reports alreadyRecorded: true
+  const oneCreated = (res1.created && !res2.created) || (!res1.created && res2.created);
+  const oneAlreadyRecorded = (res1.alreadyRecorded && !res2.alreadyRecorded) || (!res1.alreadyRecorded && res2.alreadyRecorded);
+
+  assert.equal(oneCreated, true, 'Exactly one branch unit should create/record the commit');
+  assert.equal(oneAlreadyRecorded, true, 'The other concurrent process must report alreadyRecorded: true');
+
+  // Verify repository-wide durable state invariants:
+  // Total occurrences of sharedSha across the entire repository is strictly 1
+  const state = loadState(root);
+  const allCommits = state.tasks.flatMap((t) => t.commits || []);
+  const matchingCommits = allCommits.filter((c) => c.sha === sharedSha);
+  assert.equal(matchingCommits.length, 1, 'Commit SHA must appear exactly once repository-wide');
+});
+
 test('recordCommitProgress ignores commits that are already reachable from main', () => {
   const repo = tempGitRepo();
   initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
