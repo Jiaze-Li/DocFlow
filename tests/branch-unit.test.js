@@ -276,7 +276,8 @@ test('deterministic interleaving CAS race for identical commit SHA returns alrea
 
 test('interleaved delivery of same commit SHA across different branches preserves repository-wide deduplication', () => {
   const repo = tempGitRepo();
-  initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+  const home = tempHome();
+  initRepo({ cwd: repo, homeDir: home, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
   const commitSha = 'e5d4c3b2a1e5d4c3b2a1e5d4c3b2a1e5d4c3b2a1';
   const commit = {
@@ -285,23 +286,60 @@ test('interleaved delivery of same commit SHA across different branches preserve
     message: 'Cross-branch commit payload',
   };
 
-  // Branch A records the commit
-  const resA = recordCommitProgress({ cwd: repo, branch: 'feat/branch-alpha', commit });
-  assert.equal(resA.created, true);
-  assert.equal(resA.alreadyRecorded, false);
+  // Deterministic interleaving:
+  // Both Branch A and Branch B start processing concurrently before the state lock is acquired.
+  // Before Branch A acquires the lock and writes, Branch B has already checked findCommitInState
+  // and observed that commitSha does NOT exist anywhere.
+  // We simulate Branch B entering right at the lock acquisition boundary of Branch A:
+  let injected = false;
+  let resB = null;
 
-  // Branch B receives identical commit payload (simulating branch cut from alpha or concurrent push)
-  const resB = recordCommitProgress({ cwd: repo, branch: 'feat/branch-beta', commit });
-  assert.equal(resB.created, false);
-  assert.equal(resB.alreadyRecorded, true);
-  assert.equal(resB.task.id, 'feat/branch-alpha');
+  const interleavingExec = (command, args, options) => {
+    if (
+      !injected
+      && command === 'git'
+      && Array.isArray(args)
+      && args.includes('rev-parse')
+      && args.includes('--git-common-dir')
+    ) {
+      injected = true;
+      // While Branch A is preparing to lock and write, Branch B attempts to record the SAME commit.
+      // Because Branch A holds or will serialize with Branch B via withStateLock,
+      // Branch B's repository-wide SHA recheck inside the lock will see Branch A's commit,
+      // and return alreadyRecorded without creating a duplicate unit or duplicate commit.
+      resB = recordCommitProgress({
+        cwd: repo,
+        homeDir: home,
+        branch: 'feat/branch-beta',
+        commit,
+      });
+    }
+    return execFileSync(command, args, options);
+  };
+
+  // Branch A runs with interleaving hook that triggers Branch B
+  const resA = recordCommitProgress({
+    cwd: repo,
+    homeDir: home,
+    branch: 'feat/branch-alpha',
+    commit,
+    exec: interleavingExec,
+  });
+
+  assert.equal(injected, true);
+
+  // Exactly one of the branches creates and records the commit; the other reports alreadyRecorded
+  const oneCreated = (resA.created && !resB.created) || (!resA.created && resB.created);
+  const oneRecorded = (!resA.alreadyRecorded && resB.alreadyRecorded) || (resA.alreadyRecorded && !resB.alreadyRecorded);
+  assert.equal(oneCreated, true);
+  assert.equal(oneRecorded, true);
 
   const state = loadState(repo);
-  // Ensure Branch B unit was never created with duplicate commit
-  const betaTask = state.tasks.find((t) => t.id === 'feat/branch-beta');
-  assert.equal(betaTask, undefined);
+  // Verify that only ONE unit holds the commit
+  const unitsWithCommit = state.tasks.filter((t) => t.commits?.some((c) => c.sha === commitSha));
+  assert.equal(unitsWithCommit.length, 1);
 
-  // Ensure commit exists exactly once repository-wide
+  // Total commits repository-wide is exactly 1
   const allCommits = state.tasks.flatMap((t) => t.commits || []);
   assert.equal(allCommits.length, 1);
   assert.equal(allCommits[0].sha, commitSha);

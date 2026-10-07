@@ -188,8 +188,15 @@ function stateLockPath(repoRoot, homeDir, exec = execFileSync) {
   return path.join(homeDir, '.docflow', 'locks', `state-${key}.lock`);
 }
 
-function withStateLock(repoRoot, homeDir, exec, fn, { timeoutMs = 5000, staleMs = 30000 } = {}) {
+const activeLocks = new Set();
+
+export function withStateLock(repoRoot, homeDir, exec, fn, { timeoutMs = 5000, staleMs = 30000 } = {}) {
   const lockPath = stateLockPath(repoRoot, homeDir, exec);
+  if (activeLocks.has(lockPath)) {
+    // Re-entrant acquisition within the same process
+    return fn();
+  }
+
   fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
   const startedAt = Date.now();
   let descriptor = null;
@@ -217,9 +224,11 @@ function withStateLock(repoRoot, homeDir, exec, fn, { timeoutMs = 5000, staleMs 
     }
   }
 
+  activeLocks.add(lockPath);
   try {
     return fn();
   } finally {
+    activeLocks.delete(lockPath);
     try { fs.closeSync(descriptor); } catch { /* best effort */ }
     try { fs.unlinkSync(lockPath); } catch (error) {
       if (error?.code !== 'ENOENT') throw error;

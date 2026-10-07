@@ -13,6 +13,7 @@ import {
   stateFileRevision,
   stateStoreStatus,
   stateUnitPath,
+  withStateLock,
 } from './state-store.js';
 
 export const SCHEMA_VERSION = 1;
@@ -725,105 +726,121 @@ export function recordCommitProgress({
 
   const validCommit = validateCommitProgress({ ...commit, branch: branchName });
 
-  // Capture unit revision BEFORE checking existing state to prevent race conditions
   const unitPath = stateUnitPath(branchName);
-  const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+  const initialExpectedRevision = stateFileRevision(repoRoot, unitPath, exec);
 
-  // Repository-wide commit SHA deduplication: if this SHA already exists in ANY unit,
-  // do not record duplicate progress entries anywhere in docflow-state.
-  const existingGlobally = findCommitInState(repoRoot, validCommit.sha, exec);
-  if (existingGlobally) {
+  // Pre-check outside lock for fast-path idempotency on already-recorded commits
+  const initialGlobal = findCommitInState(repoRoot, validCommit.sha, exec);
+  if (initialGlobal) {
     return {
       repoRoot,
-      task: existingGlobally.task,
-      commit: existingGlobally.commit,
+      task: initialGlobal.task,
+      commit: initialGlobal.commit,
       alreadyRecorded: true,
       created: false,
     };
   }
 
-  let task = getBranchUnit(repoRoot, branchName, exec);
-  let created = false;
+  return withStateLock(repoRoot, homeDir, exec, () => {
+    // Atomically re-check repository-wide deduplication inside the state lock:
+    // Guarantees that concurrent deliveries to DIFFERENT branches observe the serialized state
+    // and exactly one unit records the commit.
+    const existingGlobally = findCommitInState(repoRoot, validCommit.sha, exec);
+    if (existingGlobally) {
+      return {
+        repoRoot,
+        task: existingGlobally.task,
+        commit: existingGlobally.commit,
+        alreadyRecorded: true,
+        created: false,
+      };
+    }
 
-  if (!task) {
-    task = validateTask({
-      id: branchName,
-      branch: branchName,
-      title: branchName,
-      task: `Development branch: ${branchName}`,
-      started: validCommit.timestamp || isoNow(now),
-      status: 'In progress',
-      current: '',
-      next: '',
-      history: [],
-      commits: [],
-      pr: null,
-      completed: null,
-      outcome: null,
-    });
-    created = true;
-  } else {
-    task = JSON.parse(JSON.stringify(task));
-  }
+    const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
 
-  task.commits = task.commits || [];
+    let task = getBranchUnit(repoRoot, branchName, exec);
+    let created = false;
 
-  // Double-check: re-check against the loaded unit's commits before appending
-  const alreadyInUnit = task.commits.find((c) => c.sha.toLowerCase() === validCommit.sha.toLowerCase());
-  if (alreadyInUnit) {
+    if (!task) {
+      task = validateTask({
+        id: branchName,
+        branch: branchName,
+        title: branchName,
+        task: `Development branch: ${branchName}`,
+        started: validCommit.timestamp || isoNow(now),
+        status: 'In progress',
+        current: '',
+        next: '',
+        history: [],
+        commits: [],
+        pr: null,
+        completed: null,
+        outcome: null,
+      });
+      created = true;
+    } else {
+      task = JSON.parse(JSON.stringify(task));
+    }
+
+    task.commits = task.commits || [];
+
+    // Double-check: re-check against the loaded unit's commits before appending
+    const alreadyInUnit = task.commits.find((c) => c.sha.toLowerCase() === validCommit.sha.toLowerCase());
+    if (alreadyInUnit) {
+      return {
+        repoRoot,
+        task,
+        commit: alreadyInUnit,
+        alreadyRecorded: true,
+        created: false,
+      };
+    }
+
+    task.commits.push(validCommit);
+
+    const newCurrent = validCommit.summary || validCommit.message;
+    if (task.current && task.current !== newCurrent) {
+      const last = task.history.at(-1)?.text;
+      if (last !== task.current) {
+        task.history.push({ at: validCommit.timestamp || isoNow(now), text: task.current });
+      }
+    }
+    task.current = newCurrent;
+
+    try {
+      writeTaskUnit(repoRoot, task, {
+        updatedAt: isoNow(now),
+        homeDir,
+        exec,
+        message: `DocFlow: record commit ${validCommit.sha.slice(0, 7)} on ${branchName}`,
+        expectedRevision: initialExpectedRevision,
+      });
+    } catch (error) {
+      if (error?.message && error.message.includes('DocFlow durable state changed concurrently for')) {
+        // Re-read latest state: check both the target branch unit and repository-wide units
+        const latestGlobal = findCommitInState(repoRoot, validCommit.sha, exec);
+        if (latestGlobal) {
+          return {
+            repoRoot,
+            task: latestGlobal.task,
+            commit: latestGlobal.commit,
+            alreadyRecorded: true,
+            created: false,
+          };
+        }
+      }
+      // If the latest state does NOT contain this SHA, retain the true CAS conflict error
+      throw error;
+    }
+
     return {
       repoRoot,
       task,
-      commit: alreadyInUnit,
-      alreadyRecorded: true,
-      created: false,
+      commit: validCommit,
+      alreadyRecorded: false,
+      created,
     };
-  }
-
-  task.commits.push(validCommit);
-
-  const newCurrent = validCommit.summary || validCommit.message;
-  if (task.current && task.current !== newCurrent) {
-    const last = task.history.at(-1)?.text;
-    if (last !== task.current) {
-      task.history.push({ at: validCommit.timestamp || isoNow(now), text: task.current });
-    }
-  }
-  task.current = newCurrent;
-
-  try {
-    writeTaskUnit(repoRoot, task, {
-      updatedAt: isoNow(now),
-      homeDir,
-      exec,
-      message: `DocFlow: record commit ${validCommit.sha.slice(0, 7)} on ${branchName}`,
-      expectedRevision,
-    });
-  } catch (error) {
-    if (error?.message && error.message.includes('DocFlow durable state changed concurrently for')) {
-      // Re-read latest state: check both the target branch unit and repository-wide units
-      const latestGlobal = findCommitInState(repoRoot, validCommit.sha, exec);
-      if (latestGlobal) {
-        return {
-          repoRoot,
-          task: latestGlobal.task,
-          commit: latestGlobal.commit,
-          alreadyRecorded: true,
-          created: false,
-        };
-      }
-    }
-    // If the latest state does NOT contain this SHA, retain the true CAS conflict error
-    throw error;
-  }
-
-  return {
-    repoRoot,
-    task,
-    commit: validCommit,
-    alreadyRecorded: false,
-    created,
-  };
+  });
 }
 
 export function recordPullRequestEvent({
