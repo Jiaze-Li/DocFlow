@@ -219,6 +219,10 @@ test('recordPullRequestEvent merges PR metadata and handles out-of-order events 
   const repo = tempGitRepo();
   initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
+  // Create branch in git with a commit so it represents a real development branch
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/pr-test']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'PR branch work']);
+
   const prEvent1 = {
     number: 42,
     title: 'PR Title',
@@ -240,6 +244,34 @@ test('recordPullRequestEvent merges PR metadata and handles out-of-order events 
   assert.equal(res2.task.status, 'Completed');
   assert.equal(res2.task.outcome, 'Merged');
   assert.equal(res2.task.pr.merged, true);
+});
+
+test('recordPullRequestEvent ignores branches that do not exist or have no unique commits', () => {
+  const repo = tempGitRepo();
+  initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+
+  // 1. Branch does not exist in git
+  const resMissing = recordPullRequestEvent({
+    cwd: repo,
+    branch: 'feat/non-existent',
+    pr: { number: 1, title: 'Ghost PR', state: 'open' },
+  });
+  assert.equal(resMissing.ignored, true);
+  assert.match(resMissing.reason, /does not exist in git/);
+
+  // 2. Branch exists in git but points to master/base without unique commits
+  execFileSync('git', ['-C', repo, 'branch', 'feat/empty-branch', 'HEAD']);
+  const resEmpty = recordPullRequestEvent({
+    cwd: repo,
+    branch: 'feat/empty-branch',
+    pr: { number: 2, title: 'Empty PR', state: 'open' },
+  });
+  assert.equal(resEmpty.ignored, true);
+  assert.match(resEmpty.reason, /reachable from base branch/);
+
+  // Durable state must remain empty (no empty units created)
+  const state = loadState(repo);
+  assert.equal(state.tasks.length, 0);
 });
 
 test('deterministic interleaving CAS race for identical commit SHA returns alreadyRecorded', () => {
@@ -473,19 +505,21 @@ test('createBranchUnit skips creation when branch has no unique commits of its o
   const repo = tempGitRepo();
   initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
-  // Get current HEAD sha in git
-  const headSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  // Create feat/base and make a commit beyond master
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/base']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Base feature commit']);
+  const baseSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 
-  // Record HEAD commit on feat/base
+  // Record base commit on feat/base
   const commit1 = {
-    sha: headSha,
+    sha: baseSha,
     timestamp: '2026-10-01T12:00:00.000Z',
-    message: 'Base commit',
+    message: 'Base feature commit',
   };
   recordCommitProgress({ cwd: repo, branch: 'feat/base', commit: commit1 });
 
-  // Create git branch feat/child cut from HEAD (which is recorded on feat/base)
-  execFileSync('git', ['-C', repo, 'branch', 'feat/child', 'HEAD'], { stdio: 'ignore' });
+  // Create git branch feat/child cut from feat/base (whose tip is recorded on feat/base)
+  execFileSync('git', ['-C', repo, 'branch', 'feat/child', 'feat/base'], { stdio: 'ignore' });
 
   // Now createBranchUnit for feat/child whose tip commit is already recorded in durable state
   const res = createBranchUnit({ cwd: repo, branch: 'feat/child' });
@@ -602,7 +636,7 @@ test('recordCommitProgress ignores commits that are already reachable from main'
   });
 
   assert.equal(res.ignored, true);
-  assert.match(res.reason, /already reachable from main/);
+  assert.match(res.reason, /already reachable from (?:main|base)/);
 
   // State must not contain an empty or redundant unit
   const state = loadState(repo);

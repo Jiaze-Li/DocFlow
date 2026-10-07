@@ -648,8 +648,13 @@ export function findCommitInState(repoRoot, sha, exec = execFileSync) {
   return null;
 }
 
-function resolveMainCommitSha(repoRoot, exec = execFileSync) {
-  for (const ref of ['refs/heads/main^{commit}', 'refs/remotes/origin/main^{commit}']) {
+function resolveBaseBranchSha(repoRoot, exec = execFileSync) {
+  for (const ref of [
+    'refs/heads/main^{commit}',
+    'refs/remotes/origin/main^{commit}',
+    'refs/heads/master^{commit}',
+    'refs/remotes/origin/master^{commit}',
+  ]) {
     const sha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', ref], exec, { allowFailure: true }).trim();
     if (sha) return sha;
   }
@@ -661,12 +666,15 @@ function resolveMainCommitSha(repoRoot, exec = execFileSync) {
   return '';
 }
 
-function isCommitReachableFromMain(repoRoot, sha, exec = execFileSync) {
+function isCommitReachableFromBase(repoRoot, sha, exec = execFileSync) {
   if (!sha) return false;
-  const mainSha = resolveMainCommitSha(repoRoot, exec);
-  if (!mainSha) return false;
+  const baseSha = resolveBaseBranchSha(repoRoot, exec);
+  if (!baseSha) {
+    // If base branch cannot be resolved in git, fail closed: do not assume commits are unique
+    return true;
+  }
   try {
-    exec('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', sha, mainSha], { stdio: 'ignore' });
+    exec('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', sha, baseSha], { stdio: 'ignore' });
     return true;
   } catch {
     return false;
@@ -696,29 +704,32 @@ export function createBranchUnit({
       return { repoRoot, task: existing, created: false };
     }
 
-    // A branch must exist in Git and possess commits beyond main before creating a durable unit.
-    // If the branch does not exist in git (tipSha is empty), or is freshly cut from main (no commits
-    // of its own beyond main), or its tip commit is already recorded in durable state,
+    // A branch must exist in Git and possess commits beyond base branch before creating a durable unit.
+    // If the branch does not exist in git (tipSha is empty), or is freshly cut from main/master (no commits
+    // of its own beyond base), or its tip commit is already recorded in durable state,
     // do not create an empty redundant unit.
     const tipSha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}^{commit}`], exec, { allowFailure: true }).trim();
     if (!tipSha) {
       return { repoRoot, task: null, created: false };
     }
 
-    const mainSha = resolveMainCommitSha(repoRoot, exec);
-    if (mainSha) {
-      try {
-        exec('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', tipSha, mainSha], { stdio: 'ignore' });
-        // tipSha is an ancestor of or equal to mainSha -> branch has no commits of its own beyond main
-        return { repoRoot, task: null, created: false };
-      } catch (e) {
-        // Exit code 1 means NOT ancestor; allow execution to proceed
-      }
-    }
-
     const tipRecorded = findCommitInState(repoRoot, tipSha, exec);
     if (tipRecorded) {
       return { repoRoot, task: tipRecorded.task, created: false };
+    }
+
+    const baseSha = resolveBaseBranchSha(repoRoot, exec);
+    if (!baseSha) {
+      // Fail closed: if repository base branch cannot be resolved, reject empty unit creation
+      return { repoRoot, task: null, created: false };
+    }
+
+    try {
+      exec('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', tipSha, baseSha], { stdio: 'ignore' });
+      // tipSha is an ancestor of or equal to baseSha -> branch has no commits of its own beyond base
+      return { repoRoot, task: null, created: false };
+    } catch (e) {
+      // Exit code 1 means NOT ancestor; allow execution to proceed
     }
 
     const entry = validateTask({
@@ -776,10 +787,10 @@ export function recordCommitProgress({
 
   const validCommit = validateCommitProgress({ ...commit, branch: branchName });
 
-  // Check if commit is already reachable from main. Commits on main are never recorded as branch
-  // progress, and newly pushed branches whose tip or commits are already on main do not create units.
-  if (isCommitReachableFromMain(repoRoot, validCommit.sha, exec)) {
-    return { repoRoot, ignored: true, reason: `Commit ${validCommit.sha.slice(0, 7)} is already reachable from main` };
+  // Check if commit is already reachable from base branch. Commits on base are never recorded as branch
+  // progress, and newly pushed branches whose tip or commits are already on base do not create units.
+  if (isCommitReachableFromBase(repoRoot, validCommit.sha, exec)) {
+    return { repoRoot, ignored: true, reason: `Commit ${validCommit.sha.slice(0, 7)} is already reachable from base` };
   }
 
   const unitPath = stateUnitPath(branchName);
@@ -915,68 +926,87 @@ export function recordPullRequestEvent({
   }
 
   const validPr = validatePullRequest(pr);
-  const unitPath = stateUnitPath(branchName);
-  const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
 
-  let task = getBranchUnit(repoRoot, branchName, exec);
-  let created = false;
+  return withStateLock(repoRoot, homeDir, exec, () => {
+    const unitPath = stateUnitPath(branchName);
+    const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
 
-  if (!task) {
-    task = validateTask({
-      id: branchName,
-      branch: branchName,
-      title: validPr.title || branchName,
-      task: `Development branch: ${branchName}`,
-      started: isoNow(now),
-      status: 'In progress',
-      current: '',
-      next: '',
-      history: [],
-      commits: [],
-      pr: validPr,
-      completed: null,
-      outcome: null,
-    });
-    created = true;
-  } else {
-    task = JSON.parse(JSON.stringify(task));
-  }
+    let task = getBranchUnit(repoRoot, branchName, exec);
+    let created = false;
 
-  // Preserve existing merged state if already merged and incoming event is out-of-order
-  const wasAlreadyMerged = Boolean(task.pr?.merged || task.status === 'Completed');
-  const merged = validPr.merged !== undefined ? (validPr.merged || wasAlreadyMerged) : wasAlreadyMerged;
+    if (!task) {
+      // Before creating a durable unit from a PR event, verify that the branch exists in Git
+      // and has commits beyond the base branch, and is not already recorded elsewhere.
+      const tipSha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}^{commit}`], exec, { allowFailure: true }).trim();
+      if (!tipSha) {
+        return { repoRoot, ignored: true, reason: `Branch '${branchName}' does not exist in git` };
+      }
 
-  task.pr = {
-    ...(task.pr || {}),
-    ...validPr,
-    merged,
-  };
+      if (isCommitReachableFromBase(repoRoot, tipSha, exec)) {
+        return { repoRoot, ignored: true, reason: `Branch '${branchName}' tip is reachable from base branch` };
+      }
 
-  if (merged) {
-    task.status = 'Completed';
-    task.outcome = 'Merged';
-    task.completed ??= validPr.mergedAt || isoNow(now);
-  } else if (validPr.state === 'closed' && !merged) {
-    if (task.status !== 'Completed') {
-      task.status = 'Abandoned';
-      task.outcome = 'Closed without merge';
-      task.completed ??= validPr.closedAt || isoNow(now);
+      const tipRecorded = findCommitInState(repoRoot, tipSha, exec);
+      if (tipRecorded) {
+        return { repoRoot, ignored: true, reason: `Branch tip ${tipSha.slice(0, 7)} already recorded in unit '${tipRecorded.task.id}'` };
+      }
+
+      task = validateTask({
+        id: branchName,
+        branch: branchName,
+        title: validPr.title || branchName,
+        task: `Development branch: ${branchName}`,
+        started: isoNow(now),
+        status: 'In progress',
+        current: '',
+        next: '',
+        history: [],
+        commits: [],
+        pr: validPr,
+        completed: null,
+        outcome: null,
+      });
+      created = true;
+    } else {
+      task = JSON.parse(JSON.stringify(task));
     }
-  }
 
-  writeTaskUnit(repoRoot, task, {
-    updatedAt: isoNow(now),
-    homeDir,
-    exec,
-    message: `DocFlow: PR #${validPr.number} ${merged ? 'merged' : validPr.state} on ${branchName}`,
-    expectedRevision,
+    // Preserve existing merged state if already merged and incoming event is out-of-order
+    const wasAlreadyMerged = Boolean(task.pr?.merged || task.status === 'Completed');
+    const merged = validPr.merged !== undefined ? (validPr.merged || wasAlreadyMerged) : wasAlreadyMerged;
+
+    task.pr = {
+      ...(task.pr || {}),
+      ...validPr,
+      merged,
+    };
+
+    if (merged) {
+      task.status = 'Completed';
+      task.outcome = 'Merged';
+      task.completed ??= validPr.mergedAt || isoNow(now);
+    } else if (validPr.state === 'closed' && !merged) {
+      if (task.status !== 'Completed') {
+        task.status = 'Abandoned';
+        task.outcome = 'Closed without merge';
+        task.completed ??= validPr.closedAt || isoNow(now);
+      }
+    }
+
+    writeTaskUnit(repoRoot, task, {
+      updatedAt: isoNow(now),
+      homeDir,
+      exec,
+      message: `DocFlow: PR #${validPr.number} ${merged ? 'merged' : validPr.state} on ${branchName}`,
+      expectedRevision,
+    });
+
+    return {
+      repoRoot,
+      task,
+      created,
+    };
   });
-
-  return {
-    repoRoot,
-    task,
-    created,
-  };
 }
 
 export function gateStatus({ cwd = process.cwd(), exec = execFileSync } = {}) {
