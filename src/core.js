@@ -648,6 +648,13 @@ export function findCommitInState(repoRoot, sha, exec = execFileSync) {
   return null;
 }
 
+export function resolveFullCommitSha(repoRoot, shaOrRev, exec = execFileSync) {
+  const rev = String(shaOrRev ?? '').trim();
+  if (!rev) return '';
+  const resolved = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`], exec, { allowFailure: true }).trim();
+  return resolved.toLowerCase();
+}
+
 function resolveBaseBranchSha(repoRoot, exec = execFileSync) {
   for (const ref of [
     'refs/heads/main^{commit}',
@@ -676,8 +683,13 @@ function isCommitReachableFromBase(repoRoot, sha, exec = execFileSync) {
   try {
     exec('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', sha, baseSha], { stdio: 'ignore' });
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // Exit code 1 means NOT ancestor (valid check, commit is indeed not reachable from base)
+    if (error && typeof error.status === 'number' && error.status === 1) {
+      return false;
+    }
+    // Any other error (e.g. exit code 128 for non-existent/invalid object) fails closed
+    return true;
   }
 }
 
@@ -786,6 +798,14 @@ export function recordCommitProgress({
   }
 
   const validCommit = validateCommitProgress({ ...commit, branch: branchName });
+
+  // Canonicalize commit SHA to full object ID and verify that the commit object exists in Git.
+  // If the object does not exist or fails to resolve to a commit, reject the progress event fail-closed.
+  const fullSha = resolveFullCommitSha(repoRoot, validCommit.sha, exec);
+  if (!fullSha) {
+    return { repoRoot, ignored: true, reason: `Commit '${validCommit.sha}' is invalid or does not exist in git` };
+  }
+  validCommit.sha = fullSha;
 
   // Check if commit is already reachable from base branch. Commits on base are never recorded as branch
   // progress, and newly pushed branches whose tip or commits are already on base do not create units.

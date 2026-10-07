@@ -62,8 +62,12 @@ test('recordCommitProgress creates unit if missing and records progress', () => 
   const repo = tempGitRepo();
   initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/auth']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Initial commit for auth']);
+  const commitSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
   const commit1 = {
-    sha: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
+    sha: commitSha,
     timestamp: '2026-10-01T12:00:00.000Z',
     message: 'Initial commit for auth',
   };
@@ -85,8 +89,12 @@ test('recordCommitProgress is strictly idempotent on duplicate commit SHA replay
   const repo = tempGitRepo();
   initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/auth-retry']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Add auth retry logic']);
+  const commitSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
   const commit1 = {
-    sha: '1111111222222233333334444444555555566666',
+    sha: commitSha,
     timestamp: '2026-10-01T12:00:00.000Z',
     message: 'Add auth retry logic',
   };
@@ -113,20 +121,30 @@ test('recordCommitProgress records multiple commits on one branch preserving uni
   const repo = tempGitRepo();
   initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/pipeline']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Commit 1: Setup schema']);
+  const sha1 = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Commit 2: Implement handlers']);
+  const sha2 = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Commit 3: Add integration tests']);
+  const sha3 = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
   const commit1 = {
-    sha: 'aaaaaa123456789012345678901234567890aaaa',
+    sha: sha1,
     timestamp: '2026-10-01T12:00:00.000Z',
     message: 'Commit 1: Setup schema',
   };
 
   const commit2 = {
-    sha: 'bbbbbb123456789012345678901234567890bbbb',
+    sha: sha2,
     timestamp: '2026-10-01T13:00:00.000Z',
     message: 'Commit 2: Implement handlers',
   };
 
   const commit3 = {
-    sha: 'cccccc123456789012345678901234567890cccc',
+    sha: sha3,
     timestamp: '2026-10-01T14:00:00.000Z',
     message: 'Commit 3: Add integration tests',
     summary: 'Summary 3: Integration tests pass',
@@ -164,13 +182,18 @@ test('recordCommitProgress ignores non-development branches', () => {
   assert.equal(state.tasks.length, 0);
 });
 
-test('recordCommitProgress enforces repository-wide SHA deduplication across branches and normalizes SHA case', () => {
+test('recordCommitProgress enforces repository-wide SHA deduplication across branches and normalizes SHA case and short SHA', () => {
   const repo = tempGitRepo();
   initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
-  const commitSha = 'A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4E5F6A1B2';
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/branch-a']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Base commit on branch A']);
+  const commitSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  // Test recording with short SHA (first 8 hex chars)
+  const shortSha = commitSha.slice(0, 8);
   const commit1 = {
-    sha: commitSha,
+    sha: shortSha,
     timestamp: '2026-10-01T10:00:00.000Z',
     message: 'Base commit on branch A',
   };
@@ -178,11 +201,11 @@ test('recordCommitProgress enforces repository-wide SHA deduplication across bra
   const res1 = recordCommitProgress({ cwd: repo, branch: 'feat/branch-a', commit: commit1 });
   assert.equal(res1.created, true);
   assert.equal(res1.alreadyRecorded, false);
-  assert.equal(res1.commit.sha, commitSha.toLowerCase());
+  assert.equal(res1.commit.sha, commitSha.toLowerCase()); // Resolved to full SHA
 
-  // Push same commit (lowercase) to branch B (e.g. branch cut from branch A)
+  // Push same commit using full SHA (uppercase) to branch B (e.g. branch cut from branch A)
   const commit2 = {
-    sha: commitSha.toLowerCase(),
+    sha: commitSha.toUpperCase(),
     timestamp: '2026-10-01T11:00:00.000Z',
     message: 'Duplicate commit on branch B',
   };
@@ -279,7 +302,13 @@ test('deterministic interleaving CAS race for identical commit SHA returns alrea
   const home = tempHome();
   initRepo({ cwd: repo, homeDir: home, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
-  const commitSha = 'f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2';
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/race-sha']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Concurrent webhook payload commit']);
+  const commitSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Different commit payload']);
+  const differentSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
   const commit = {
     sha: commitSha,
     timestamp: '2026-10-01T14:30:00.000Z',
@@ -344,7 +373,7 @@ test('deterministic interleaving CAS race for identical commit SHA returns alrea
   };
 
   const differentCommit = {
-    sha: '2222222222222222222222222222222222222222',
+    sha: differentSha,
     timestamp: '2026-10-01T14:35:00.000Z',
     message: 'Different commit payload',
   };
@@ -372,7 +401,11 @@ test('interleaved delivery of same commit SHA across different branches preserve
   const home = tempHome();
   initRepo({ cwd: repo, homeDir: home, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
-  const commitSha = 'e5d4c3b2a1e5d4c3b2a1e5d4c3b2a1e5d4c3b2a1';
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/branch-alpha']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Cross-branch commit payload']);
+  const commitSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', repo, 'branch', 'feat/branch-beta', 'HEAD']);
+
   const commit = {
     sha: commitSha,
     timestamp: '2026-10-01T15:00:00.000Z',
@@ -443,12 +476,22 @@ test('concurrent delivery interleaving serializes cleanly under lock without los
   const home = tempHome();
   initRepo({ cwd: repo, homeDir: home, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
 
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/conflict-test']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Commit A']);
+  const shaA = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Commit B by other worker']);
+  const shaB = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Commit C']);
+  const shaC = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
   // First create a branch unit with commit A
   recordCommitProgress({
     cwd: repo,
     homeDir: home,
     branch: 'feat/conflict-test',
-    commit: { sha: '1111111111111111111111111111111111111111', timestamp: '2026-10-01T10:00:00.000Z', message: 'Commit A' },
+    commit: { sha: shaA, timestamp: '2026-10-01T10:00:00.000Z', message: 'Commit A' },
   });
 
   // Inject an interleaving exec before the second worker acquires the lock, but after reading state/revision
@@ -471,7 +514,7 @@ test('concurrent delivery interleaving serializes cleanly under lock without los
           cwd: repo,
           homeDir: home,
           branch: 'feat/conflict-test',
-          commit: { sha: '2222222222222222222222222222222222222222', timestamp: '2026-10-01T10:05:00.000Z', message: 'Commit B by other worker' },
+          commit: { sha: shaB, timestamp: '2026-10-01T10:05:00.000Z', message: 'Commit B by other worker' },
         });
       }
     }
@@ -484,7 +527,7 @@ test('concurrent delivery interleaving serializes cleanly under lock without los
     cwd: repo,
     homeDir: home,
     branch: 'feat/conflict-test',
-    commit: { sha: '3333333333333333333333333333333333333333', timestamp: '2026-10-01T10:10:00.000Z', message: 'Commit C' },
+    commit: { sha: shaC, timestamp: '2026-10-01T10:10:00.000Z', message: 'Commit C' },
     exec: interleavingExec,
   });
   assert.equal(injected, true);
@@ -494,11 +537,7 @@ test('concurrent delivery interleaving serializes cleanly under lock without los
   const state = loadState(repo);
   const task = state.tasks.find((t) => t.id === 'feat/conflict-test');
   assert.ok(task);
-  assert.deepEqual(task.commits.map((c) => c.sha), [
-    '1111111111111111111111111111111111111111',
-    '2222222222222222222222222222222222222222',
-    '3333333333333333333333333333333333333333',
-  ]);
+  assert.deepEqual(task.commits.map((c) => c.sha), [shaA, shaB, shaC]);
 });
 
 test('createBranchUnit skips creation when branch has no unique commits of its own', () => {
@@ -639,6 +678,41 @@ test('recordCommitProgress ignores commits that are already reachable from main'
   assert.match(res.reason, /already reachable from (?:main|base)/);
 
   // State must not contain an empty or redundant unit
+  const state = loadState(repo);
+  assert.equal(state.tasks.length, 0);
+});
+
+test('recordCommitProgress rejects non-existent or invalid commit SHAs without creating durable branch units', () => {
+  const repo = tempGitRepo();
+  initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+
+  // 1. Completely fictitious 40-character SHA that does not exist in git
+  const resGhost = recordCommitProgress({
+    cwd: repo,
+    branch: 'feat/ghost-commit',
+    commit: {
+      sha: 'ffffffffffffffffffffffffffffffffffffffff',
+      timestamp: '2026-10-01T12:00:00.000Z',
+      message: 'Fictitious commit',
+    },
+  });
+  assert.equal(resGhost.ignored, true);
+  assert.match(resGhost.reason, /invalid or does not exist in git/);
+
+  // 2. Fictitious short SHA that does not exist in git
+  const resShortGhost = recordCommitProgress({
+    cwd: repo,
+    branch: 'feat/ghost-short',
+    commit: {
+      sha: 'deadbeef',
+      timestamp: '2026-10-01T12:00:00.000Z',
+      message: 'Short fictitious commit',
+    },
+  });
+  assert.equal(resShortGhost.ignored, true);
+  assert.match(resShortGhost.reason, /invalid or does not exist in git/);
+
+  // Durable state must remain empty (no ghost units created)
   const state = loadState(repo);
   assert.equal(state.tasks.length, 0);
 });
