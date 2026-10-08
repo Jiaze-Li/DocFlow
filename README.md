@@ -4,6 +4,38 @@ DocFlow is a cross-agent development-documentation workflow.
 
 It solves one narrow v1 problem: **keep repository-owned project progress current automatically, and make it visible in Obsidian without creating a second source of truth.**
 
+## v2: commit-native progress (recommended)
+
+A development commit is the progress fact. No `begin` / `checkpoint` / `gate` call is needed for correctness.
+
+```text
+git commit  ->  commit-msg hook validates the subject (deterministic, no model)
+git push    ->  GitHub Action ingests every new commit onto docflow-state (once per SHA)
+Mac         ->  `docflow sync` projects docflow-state into the Obsidian note
+```
+
+- One development branch = one unit. `main`, `master`, the repository default branch and `docflow-state` are never units.
+- One distinct commit SHA = one progress event (repository-wide replay is idempotent). Two commits with identical subjects are two events.
+- The commit's **first non-empty line** is the progress text. Bodies are Git detail and are never promoted; `Next` is never inferred.
+- PR opened → PR metadata attaches to the branch unit; PR merged → `Completed` / `Merged`; closed unmerged → `Abandoned`. Deleting a branch never deletes progress.
+- No historical backfill: only commits first exposed by a push after activation are ingested. Branches that existed at activation are forward-only; a missed Action run is reconciled by the next push for that branch.
+- GitHub validates subjects again; an invalid one produces a workflow warning/summary but is still ingested. History is never rewritten and `docflow-state` is only ever fast-forwarded.
+
+### Enable in a repository
+
+```bash
+node /path/to/DocFlow/bin/docflow.js init --project <name> --note "project - <name>.md"
+node /path/to/DocFlow/bin/docflow.js setup-repo      # hook + .github/workflows/docflow.yml + activation record
+git add .github/workflows/docflow.yml && git commit -m "Enable DocFlow commit-native progress" && git push
+node /path/to/DocFlow/bin/docflow.js doctor          # reports missing/stale hook, workflow, state
+```
+
+`setup-repo` refuses to overwrite an unrelated `commit-msg` hook or workflow file and prints what to add manually. The workflow is a thin caller of `Jiaze-Li/DocFlow/action` (pin it with `--action-ref`); it needs only `contents: write` and never uses `pull_request_target`.
+
+The commit subject rules (`docflow validate-message --message "..."`): non-empty, 6–100 characters, not a placeholder (`wip`, `update`, `changes`, …), a blank line before any body. Merge/revert/fixup subjects pass.
+
+Legacy v1 commands below keep working for repositories that have not activated commit-native progress.
+
 ## v1 model
 
 Each enabled repository keeps durable DocFlow state on a reserved Git branch named `docflow-state`. Business branches/worktrees do not own the long-lived progress record.

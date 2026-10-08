@@ -373,5 +373,7 @@ export function stateUnitPath(taskId) {
   // filesystem limits (in case the state branch is ever checked out). The unit's real id
   // always lives inside the JSON, never in the file name.
   if (Buffer.byteLength(encoded) <= 180) return `.docflow/units/${encoded}.json`;
-  return `.docflow/units/~${createHash('sha256').update(id).digest('hex')}.json`;
+  // '%00' cannot appear in an encodeURIComponent() result (NUL is stripped from ids), so a
+  // hashed name never collides with a plain-encoded id.
+  return `.docflow/units/%00sha256-${createHash('sha256').update(id).digest('hex')}.json`;
 }

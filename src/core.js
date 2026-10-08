@@ -970,6 +970,113 @@ export function recordCommitProgress({
   });
 }
 
+function isCasConflict(error) {
+  return Boolean(error?.message && error.message.includes('DocFlow durable state changed concurrently for'));
+}
+
+/**
+ * Record an ordered batch of commits (one push) for a branch unit in a single durable write.
+ * Every distinct SHA becomes exactly one progress event; SHAs already recorded anywhere in the
+ * repository are skipped. Text equality is never used for identity.
+ */
+export function recordCommitsProgress({
+  cwd = process.cwd(),
+  branch,
+  commits,
+  now = new Date(),
+  exec = execFileSync,
+  homeDir = os.homedir(),
+  defaultBranch = null,
+} = {}) {
+  const repoRoot = resolveRepoRoot(cwd, exec);
+  if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
+  const branchName = normalizeBranchName(branch);
+  if (!isDevelopmentBranch(branchName, { repoRoot, exec, defaultBranch })) {
+    return { repoRoot, ignored: true, reason: `Branch '${branchName}' is not a development branch`, recorded: [], alreadyRecorded: [], rejected: [] };
+  }
+  if (!Array.isArray(commits)) throw new Error('commits must be an array');
+
+  const rejected = [];
+  const valid = [];
+  const seenInput = new Set();
+  for (const raw of commits) {
+    const candidate = validateCommitProgress({ ...raw, branch: branchName });
+    const fullSha = resolveFullCommitSha(repoRoot, candidate.sha, exec);
+    if (!fullSha) {
+      rejected.push({ sha: candidate.sha, reason: 'invalid or does not exist in git' });
+      continue;
+    }
+    if (seenInput.has(fullSha)) continue;
+    seenInput.add(fullSha);
+    valid.push({ ...candidate, sha: fullSha });
+  }
+
+  return withStateLock(repoRoot, homeDir, exec, () => {
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      // Observe the newest published state first; the fast-forward-only state push (plus the
+      // beforeCommit assertion below) is what serializes writers across machines.
+      refreshStateFromOrigin({ repoRoot, homeDir, exec });
+      const unitPath = resolveStateUnitPath(repoRoot, branchName, exec);
+      const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+      const state = loadState(repoRoot, exec);
+      const owner = new Map();
+      for (const unit of state.tasks) for (const c of unit.commits || []) owner.set(c.sha.toLowerCase(), unit.id);
+
+      const alreadyRecorded = valid.filter((c) => owner.has(c.sha)).map((c) => ({ sha: c.sha, unitId: owner.get(c.sha) }));
+      let pending = valid.filter((c) => !owner.has(c.sha));
+
+      const existing = state.tasks.find((t) => t.branch === branchName || (t.id === branchName && t.branch == null)) || null;
+      // Base reachability only guards creation of NEW units from baseline commits; a known
+      // unit keeps accepting delayed commits even after the branch was merged.
+      if (!existing) pending = pending.filter((c) => !isCommitReachableFromBase(repoRoot, c.sha, exec, defaultBranch));
+
+      if (!pending.length) {
+        return {
+          repoRoot, task: existing, created: false, recorded: [], alreadyRecorded, rejected,
+          ...(existing ? {} : { ignored: true, reason: 'No new commits beyond base for a new branch unit' }),
+        };
+      }
+
+      const task = existing ? JSON.parse(JSON.stringify(existing)) : validateTask({
+        id: branchName, branch: branchName, title: branchName, task: `Development branch: ${branchName}`,
+        started: pending[0].timestamp || isoNow(now), status: 'In progress', current: '', next: '',
+        history: [], commits: [], pr: null, completed: null, outcome: null,
+      });
+      task.commits = task.commits || [];
+      for (const c of pending) {
+        // Each distinct SHA is its own progress event; the superseded Current always moves to
+        // History even when two subjects are textually identical.
+        if (task.current) task.history.push({ at: c.timestamp, text: task.current });
+        task.commits.push(c);
+        task.current = c.message;
+      }
+
+      try {
+        writeTaskUnit(repoRoot, task, {
+          updatedAt: isoNow(now), homeDir, exec, expectedRevision,
+          message: `DocFlow: record ${pending.length} commit${pending.length === 1 ? '' : 's'} on ${branchName}`,
+          beforeCommit: () => {
+            const latest = loadState(repoRoot, exec);
+            const taken = new Set(latest.tasks.flatMap((u) => (u.commits || []).map((c) => c.sha.toLowerCase())));
+            if (pending.some((c) => taken.has(c.sha))) {
+              throw Object.assign(new Error('DocFlow commit already recorded by a concurrent writer'), { code: 'DOCFLOW_SHA_RECORDED' });
+            }
+          },
+        });
+      } catch (error) {
+        if (error?.code === 'DOCFLOW_SHA_RECORDED' || isCasConflict(error)) {
+          lastError = error;
+          continue; // re-read the newest state and recompute
+        }
+        throw error;
+      }
+      return { repoRoot, task, created: !existing, recorded: pending, alreadyRecorded, rejected };
+    }
+    throw lastError;
+  });
+}
+
 export function recordPullRequestEvent({
   cwd = process.cwd(),
   branch,
