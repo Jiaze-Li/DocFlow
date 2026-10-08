@@ -155,7 +155,7 @@ test('recordCommitProgress records multiple commits on one branch preserving uni
     sha: sha3,
     timestamp: '2026-10-01T14:00:00.000Z',
     message: 'Commit 3: Add integration tests',
-    summary: 'Summary 3: Integration tests pass',
+    summary: 'Summary 3: must not be promoted',
   };
 
   recordCommitProgress({ cwd: repo, branch: 'feat/pipeline', commit: commit1 });
@@ -168,7 +168,8 @@ test('recordCommitProgress records multiple commits on one branch preserving uni
   assert.equal(task.id, 'feat/pipeline');
   assert.equal(task.commits.length, 3);
   assert.deepEqual(task.commits.map((c) => c.sha), [commit1.sha, commit2.sha, commit3.sha]);
-  assert.equal(task.current, 'Summary 3: Integration tests pass');
+  assert.equal(task.current, 'Commit 3: Add integration tests');
+  assert.equal(task.commits[2].summary, undefined);
   assert.deepEqual(task.history.map((h) => h.text), [
     'Commit 1: Setup schema',
     'Commit 2: Implement handlers',
@@ -893,4 +894,18 @@ test('200-character branch ids work through state, runtime, checkpoint, markers 
   assert.equal(cp.runtime.activeTaskId, longBranch);
   assert.equal(loadState(repo).activeTaskId, longBranch);
   assert.equal(loadRuntime(repo).activeTaskId, longBranch);
+});
+
+test('multiline commit messages record only the first non-empty line as progress text', () => {
+  const repo = tempGitRepo();
+  initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/body']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-q', '-m', 'Add retry to uploads', '-m', 'Body detail that must stay out of progress.\nNext: ship it']);
+  const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const full = execFileSync('git', ['-C', repo, 'log', '-1', '--format=%B'], { encoding: 'utf8' });
+  recordCommitProgress({ cwd: repo, branch: 'feat/body', commit: { sha, timestamp: '2026-10-01T12:00:00.000Z', message: `\n${full}` } });
+  const task = loadState(repo).tasks[0];
+  assert.equal(task.current, 'Add retry to uploads');
+  assert.equal(task.commits[0].message, 'Add retry to uploads');
+  assert.equal(task.next, '');
 });

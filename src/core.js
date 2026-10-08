@@ -168,6 +168,11 @@ function normalizeIsoDate(value, label, { required = false } = {}) {
   return text;
 }
 
+export function commitSubject(message) {
+  const line = String(message ?? '').replace(/\r/g, '').split('\n').map((l) => l.trim()).find(Boolean) || '';
+  return line.length > 2000 ? `${line.slice(0, 1999)}…` : line;
+}
+
 function validateCommitProgress(commit) {
   if (!commit || typeof commit !== 'object' || Array.isArray(commit)) throw new Error('Invalid commit progress event');
   const rawSha = clean(commit.sha, 'commit.sha', { required: true, max: 64 });
@@ -175,9 +180,11 @@ function validateCommitProgress(commit) {
   const sha = rawSha.toLowerCase();
   const branch = clean(commit.branch, 'commit.branch', { required: true, max: MAX_TASK_ID_LENGTH });
   const timestamp = normalizeIsoDate(commit.timestamp, 'commit.timestamp', { required: true });
-  const message = clean(commit.message, 'commit.message', { required: true, max: 2000 });
-  const summary = commit.summary == null ? null : clean(commit.summary, 'commit.summary', { max: 2000 });
-  return { sha, branch, timestamp, message, ...(summary ? { summary } : {}) };
+  // The first non-empty line is the canonical progress text. Bodies and any optional
+  // summary field are never promoted into progress.
+  const message = commitSubject(clean(commit.message, 'commit.message', { required: true, max: 100000 }));
+  if (!message) throw new Error('commit.message is required');
+  return { sha, branch, timestamp, message };
 }
 
 function validatePullRequest(pr) {
@@ -892,7 +899,7 @@ export function recordCommitProgress({
 
     task.commits.push(validCommit);
 
-    const newCurrent = validCommit.summary || validCommit.message;
+    const newCurrent = validCommit.message;
     if (task.current && task.current !== newCurrent) {
       const last = task.history.at(-1)?.text;
       if (last !== task.current) {
