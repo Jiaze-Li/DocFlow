@@ -129,17 +129,97 @@ test('pre-activation branches are forward-only: no historical backfill', () => {
   assert.deepEqual(w.fresh().tasks.find((t) => t.id === 'feat/old').commits.map((c) => c.sha), [fresh]);
 });
 
-test('commits already exposed on other branches or baseline are not re-attributed to a new branch', () => {
+test('stacked post-activation branches never lose shared commits, whichever run goes first', () => {
+  for (const order of ['a-first', 'b-first']) {
+    const w = world();
+    git(w.dev, 'checkout', '-q', '-b', 'feat/base-a');
+    const a1 = commitOn(w.dev, 'Work belonging to A');
+    git(w.dev, 'push', '-q', 'origin', 'feat/base-a');
+    git(w.dev, 'checkout', '-q', '-b', 'feat/stacked-b');
+    const b1 = commitOn(w.dev, 'Work belonging to B');
+    git(w.dev, 'push', '-q', 'origin', 'feat/stacked-b');
+    const runA = () => w.ingest({ ref: 'refs/heads/feat/base-a', before: ZERO, after: a1 });
+    const runB = () => w.ingest({ ref: 'refs/heads/feat/stacked-b', before: ZERO, after: b1 });
+    if (order === 'a-first') { runA(); runB(); } else { runB(); runA(); }
+    const units = w.fresh().tasks;
+    const recorded = units.flatMap((u) => u.commits.map((c) => c.sha));
+    assert.deepEqual([...recorded].sort(), [a1, b1].sort(), order);
+    if (order === 'a-first') assert.deepEqual(units.find((u) => u.id === 'feat/stacked-b').commits.map((c) => c.sha), [b1]);
+  }
+});
+
+test('a branch stacked on a pre-activation branch does not backfill that branch\'s history', () => {
+  const w = world({
+    activate: false,
+    before: ({ dev }) => {
+      git(dev, 'checkout', '-q', '-b', 'feat/legacy');
+      commitOn(dev, 'Legacy history one');
+      commitOn(dev, 'Legacy history two');
+      git(dev, 'push', '-q', 'origin', 'feat/legacy');
+    },
+  });
+  setupRepo({ cwd: w.dev, homeDir: w.home });
+  git(w.dev, 'checkout', '-q', '-b', 'feat/on-legacy');
+  const mine = commitOn(w.dev, 'My own new change');
+  git(w.dev, 'push', '-q', 'origin', 'feat/on-legacy');
+  const res = w.ingest({ ref: 'refs/heads/feat/on-legacy', before: ZERO, after: mine });
+  assert.deepEqual(res.recorded, [mine]);
+});
+
+test('ingestion requires an activation record (no accidental backfill on non-activated repos)', () => {
+  const w = world({ activate: false });
+  git(w.dev, 'checkout', '-q', '-b', 'feat/inactive');
+  const sha = commitOn(w.dev, 'Unactivated repository change');
+  git(w.dev, 'push', '-q', 'origin', 'feat/inactive');
+  assert.throws(() => w.ingest({ ref: 'refs/heads/feat/inactive', before: ZERO, after: sha }), /not activated/);
+});
+
+test('empty and oversized commit messages that reach GitHub are ingested under a stand-in subject with a warning', () => {
   const w = world();
-  git(w.dev, 'checkout', '-q', '-b', 'feat/base-a');
-  const a1 = commitOn(w.dev, 'Work belonging to A');
-  git(w.dev, 'push', '-q', 'origin', 'feat/base-a');
-  git(w.dev, 'checkout', '-q', '-b', 'feat/stacked-b');
-  const b1 = commitOn(w.dev, 'Work belonging to B');
-  git(w.dev, 'push', '-q', 'origin', 'feat/stacked-b');
-  const res = w.ingest({ ref: 'refs/heads/feat/stacked-b', before: ZERO, after: b1 });
-  assert.deepEqual(res.recorded, [b1]);
-  assert.ok(!res.recorded.includes(a1));
+  git(w.dev, 'checkout', '-q', '-b', 'feat/odd-messages');
+  const good = commitOn(w.dev, 'A perfectly fine change');
+  git(w.dev, 'commit', '--allow-empty', '-q', '--no-verify', '--allow-empty-message', '-m', '');
+  const empty = head(w.dev);
+  git(w.dev, 'commit', '--allow-empty', '-q', '--no-verify', '-m', `Oversized body subject`, '-m', 'x'.repeat(150000));
+  const huge = head(w.dev);
+  const last = commitOn(w.dev, 'Change after the odd ones');
+  git(w.dev, 'push', '-q', 'origin', 'feat/odd-messages');
+  const res = w.ingest({ ref: 'refs/heads/feat/odd-messages', before: ZERO, after: last });
+  assert.deepEqual(res.recorded, [good, empty, huge, last]);
+  assert.ok(res.warnings.some((x) => x.sha === empty));
+  const unit = w.fresh().tasks.find((t) => t.id === 'feat/odd-messages');
+  assert.equal(unit.commits[1].message, '(empty commit message)');
+  assert.equal(unit.commits[2].message, 'Oversized body subject');
+  // The branch is not stuck: a later reconcile still works.
+  const next = commitOn(w.dev, 'Following change');
+  git(w.dev, 'push', '-q', 'origin', 'feat/odd-messages');
+  assert.deepEqual(w.ingest({ ref: 'refs/heads/feat/odd-messages', before: last, after: next }).recorded, [next]);
+});
+
+test('merged-tip reconcile is bounded: an unconnected rebased tip records only the tip, never base history', () => {
+  const w = world();
+  git(w.dev, 'checkout', '-q', 'main');
+  for (let i = 0; i < 4; i += 1) commitOn(w.dev, `Base history commit ${i}`);
+  git(w.dev, 'push', '-q', 'origin', 'main');
+  git(w.dev, 'checkout', '-q', '-b', 'feat/rewritten', 'main');
+  const c1 = commitOn(w.dev, 'Recorded before the rewrite');
+  git(w.dev, 'push', '-q', 'origin', 'feat/rewritten');
+  w.ingest({ ref: 'refs/heads/feat/rewritten', before: ZERO, after: c1 });
+
+  // The branch is rewritten (its run is missed), then merged into main.
+  git(w.dev, 'checkout', '-q', '-B', 'feat/rewritten', 'main~2');
+  const d1 = commitOn(w.dev, 'Rewritten history one');
+  const d2 = commitOn(w.dev, 'Rewritten history two');
+  git(w.dev, 'checkout', '-q', 'main');
+  git(w.dev, 'merge', '-q', '--no-edit', 'feat/rewritten');
+  git(w.dev, 'push', '-q', 'origin', 'main');
+  git(w.dev, 'push', '-q', '--force', 'origin', 'feat/rewritten');
+  const res = w.ingest({ ref: 'refs/heads/feat/rewritten', before: c1, after: d2 });
+  assert.ok(['reconcile-merged', 'reconcile-merged-tip'].includes(res.mode), res.mode);
+  assert.ok(res.recorded.length <= 2 && res.recorded.includes(d2), JSON.stringify(res.recorded));
+  assert.ok(!res.recorded.some((sha) => sha !== d1 && sha !== d2));
+  const total = w.fresh().tasks.find((t) => t.id === 'feat/rewritten').commits.length;
+  assert.ok(total <= 3, `no base history backfill (got ${total})`);
 });
 
 test('non-fast-forward / rebased pushes preserve recorded progress and add only unseen SHAs', () => {
@@ -364,4 +444,44 @@ test('doctor reports missing/stale commit-native integration once activated, and
   assert.match(c.github_workflow.detail, /missing/);
   assert.equal(c.commit_hook.ok, false);
   assert.match(c.commit_hook.detail, /stale/);
+});
+
+test('same-branch race: a push run and a merged-PR run executing at the same time both land', async () => {
+  const w = world();
+  git(w.dev, 'checkout', '-q', '-b', 'feat/samerace');
+  const c1 = commitOn(w.dev, 'Raced branch first');
+  git(w.dev, 'push', '-q', 'origin', 'feat/samerace');
+  w.ingest({ ref: 'refs/heads/feat/samerace', before: ZERO, after: c1 });
+  const c2 = commitOn(w.dev, 'Raced branch second');
+  git(w.dev, 'push', '-q', 'origin', 'feat/samerace');
+  git(w.dev, 'checkout', '-q', 'main');
+  git(w.dev, 'merge', '-q', '--ff-only', 'feat/samerace');
+  git(w.dev, 'push', '-q', 'origin', 'main');
+
+  for (let round = 0; round < 3; round += 1) {
+    const pushRunner = w.runner();
+    const prRunner = w.runner();
+    const pushEvent = path.join(pushRunner.home, 'push.json');
+    const prEvent = path.join(prRunner.home, 'pr.json');
+    fs.writeFileSync(pushEvent, JSON.stringify({ ref: 'refs/heads/feat/samerace', before: c1, after: c2, repository: { default_branch: 'main' } }));
+    fs.writeFileSync(prEvent, JSON.stringify(prPayload({ number: 11, branch: 'feat/samerace', sha: c2, state: 'closed', merged: true })));
+    const run = (runner, name, file) => new Promise((resolve) => {
+      const child = spawn(process.execPath, [CLI, 'ingest-github', '--event-name', name, '--event-path', file, '--cwd', runner.root], {
+        env: { ...process.env, HOME: runner.home }, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let err = '';
+      child.stderr.on('data', (d) => { err += d; });
+      child.on('close', (code) => resolve({ code, err }));
+    });
+    const results = await Promise.all([run(pushRunner, 'push', pushEvent), run(prRunner, 'pull_request', prEvent)]);
+    for (const r of results) assert.equal(r.code, 0, r.err);
+    if (round === 0) {
+      const unit = w.fresh().tasks.find((t) => t.id === 'feat/samerace');
+      assert.deepEqual(unit.commits.map((c) => c.sha), [c1, c2]);
+      assert.equal(unit.status, 'Completed');
+      assert.equal(unit.outcome, 'Merged');
+      assert.equal(unit.pr.number, 11);
+    }
+  }
+  assert.equal(w.fresh().tasks.length, 1);
 });

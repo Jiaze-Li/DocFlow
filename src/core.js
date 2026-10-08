@@ -1000,7 +1000,18 @@ export function recordCommitsProgress({
   const valid = [];
   const seenInput = new Set();
   for (const raw of commits) {
-    const candidate = validateCommitProgress({ ...raw, branch: branchName });
+    // A commit that reached GitHub with an unusable message (empty, oversized) is still
+    // progress: it is ingested under a stand-in subject instead of failing the whole push.
+    let candidate;
+    try {
+      candidate = validateCommitProgress({
+        ...raw, branch: branchName,
+        message: commitSubject(String(raw?.message ?? '').slice(0, 20000)) || '(empty commit message)',
+      });
+    } catch (error) {
+      rejected.push({ sha: String(raw?.sha ?? ''), reason: error.message });
+      continue;
+    }
     const fullSha = resolveFullCommitSha(repoRoot, candidate.sha, exec);
     if (!fullSha) {
       rejected.push({ sha: candidate.sha, reason: 'invalid or does not exist in git' });
@@ -1095,7 +1106,7 @@ export function recordPullRequestEvent({
 
   const validPr = validatePullRequest(pr);
 
-  return withStateLock(repoRoot, homeDir, exec, () => {
+  const attemptOnce = () => {
     const unitPath = resolveStateUnitPath(repoRoot, branchName, exec);
     const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
 
@@ -1174,6 +1185,23 @@ export function recordPullRequestEvent({
       task,
       created,
     };
+  };
+
+  return withStateLock(repoRoot, homeDir, exec, () => {
+    // Same discipline as commit recording: observe the newest published state, and re-read it
+    // when another writer (e.g. a concurrent push run for this branch) wins the race, so a
+    // merged/closed event is never dropped on stale state.
+    let lastError = null;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      refreshStateFromOrigin({ repoRoot, homeDir, exec });
+      try {
+        return attemptOnce();
+      } catch (error) {
+        if (!isCasConflict(error)) throw error;
+        lastError = error;
+      }
+    }
+    throw lastError;
   });
 }
 

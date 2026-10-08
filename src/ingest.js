@@ -22,6 +22,7 @@ import { validateCommitMessage } from './validator.js';
 export const ACTIVATION_PATH = '.docflow/activation.json';
 const ZERO_SHA = /^0+$/;
 const MAX_ACTIVATION_BRANCHES = 5000;
+const MAX_MERGED_WALK = 500;
 
 function git(repoRoot, args, exec = execFileSync, { allowFailure = false } = {}) {
   try {
@@ -86,15 +87,16 @@ export function readActivation(repoRoot, exec = execFileSync) {
   return value;
 }
 
-function otherRemoteTips(repoRoot, branch, exec) {
-  const out = git(repoRoot, ['for-each-ref', '--format=%(refname) %(objectname) %(symref)', 'refs/remotes/origin/'], exec, { allowFailure: true });
+// Tips of branches that already existed when commit-native tracking was activated. Their
+// history is pre-v2 and must never be backfilled into another branch. Branches created after
+// activation are deliberately NOT excluded: commits shared by two such branches are recorded
+// by whichever ingestion runs first (SHA dedup), so neither run can drop them.
+function preActivationTips(repoRoot, branch, activation, exec) {
   const tips = new Set();
-  for (const line of out.split('\n')) {
-    const [ref, sha, symref] = line.trim().split(' ');
-    if (!ref || !sha || symref) continue;
-    const name = ref.slice('refs/remotes/origin/'.length);
-    if (name === 'HEAD' || name === STATE_BRANCH || name === branch) continue;
-    tips.add(sha);
+  for (const name of activation.branches) {
+    if (name === branch || name === STATE_BRANCH) continue;
+    const sha = git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}^{commit}`], exec, { allowFailure: true }).trim();
+    if (sha) tips.add(sha);
   }
   return [...tips];
 }
@@ -112,9 +114,11 @@ export function selectNewCommits(repoRoot, {
 }) {
   const unit = getBranchUnit(repoRoot, branch, exec);
   const recorded = (unit?.commits || []).map((c) => c.sha).filter((sha) => commitExists(repoRoot, sha, exec));
+  const activation = readActivation(repoRoot, exec);
+  if (!activation) throw new Error('Commit-native progress is not activated (run `docflow setup-repo`)');
   const exclusions = new Set([
     ...resolveBaseBranchShas(repoRoot, exec, defaultBranch),
-    ...otherRemoteTips(repoRoot, branch, exec),
+    ...preActivationTips(repoRoot, branch, activation, exec),
   ]);
   // NB: a single `--not` negates everything after it; repeating it would toggle back.
   const notArgs = (extra) => {
@@ -137,17 +141,21 @@ export function selectNewCommits(repoRoot, {
     const forkParents = first
       ? git(repoRoot, ['rev-list', '--parents', '-n', '1', first], exec).trim().split(/\s+/).slice(1)
       : [];
-    return { mode: 'reconcile-merged', shas: revList(['--first-parent', after, '--not', ...recorded, ...forkParents]) };
+    // Fail closed: if no recorded commit is connected to the merged tip, or the walk is
+    // implausibly long, we cannot prove these commits belong to the branch; record only the
+    // tip instead of risking a backfill of base history.
+    const connected = recorded.some((sha) => isAncestor(repoRoot, sha, after, exec));
+    const walked = connected ? revList(['--first-parent', after, '--not', ...recorded, ...forkParents]) : [];
+    if (!connected || walked.length > MAX_MERGED_WALK) return { mode: 'reconcile-merged-tip', shas: [after] };
+    return { mode: 'reconcile-merged', shas: walked };
   }
   if (!hasBefore) {
-    const activation = readActivation(repoRoot, exec);
-    const preExisting = activation ? activation.branches.includes(branch) : true;
+    const preExisting = activation.branches.includes(branch);
     // Unknown `before` (e.g. a PR event) on a pre-existing branch: only the tip is new.
     if (before == null && preExisting) return { mode: 'tip', shas: [after] };
     return { mode: 'create', shas: list([]) };
   }
-  const activation = readActivation(repoRoot, exec);
-  if (activation && !activation.branches.includes(branch)) {
+  if (!activation.branches.includes(branch)) {
     return { mode: 'create-missed', shas: list([]) };
   }
   if (!commitExists(repoRoot, before, exec)) return { mode: 'tip', shas: [after] };
