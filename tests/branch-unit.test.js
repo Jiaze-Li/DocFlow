@@ -18,8 +18,8 @@ import {
   syncObsidian,
   unitMarkers,
 } from '../src/core.js';
-import { stateUnitPath } from '../src/state-store.js';
-import { tempGitRepo, tempHome } from './helpers.js';
+import { commitStateFiles, listStateFiles, stateUnitPath } from '../src/state-store.js';
+import { cloneGitRepo, tempBareGitRepo, tempGitRepo, tempHome } from './helpers.js';
 
 test('isDevelopmentBranch accurately filters branches', () => {
   assert.equal(isDevelopmentBranch('main'), false);
@@ -949,4 +949,99 @@ test('worst-case encoded 200-character ids and refs/heads/ prefixed 200-char nam
   }
   assert.equal(syncObsidian({ cwd: repo, homeDir: home }).updatedTaskIds.length, 2);
   assert.equal(loadState(repo).tasks.length, 2);
+});
+
+test('cross-machine same-SHA race: a stale dedup view cannot record the SHA on a second unit', () => {
+  const remote = tempBareGitRepo();
+  const repoA = tempGitRepo();
+  const homeA = tempHome();
+  const homeB = tempHome();
+  execFileSync('git', ['-C', repoA, 'remote', 'add', 'origin', remote]);
+  execFileSync('git', ['-C', repoA, 'push', '-q', 'origin', 'HEAD:refs/heads/main']);
+  execFileSync('git', ['--git-dir', remote, 'symbolic-ref', 'HEAD', 'refs/heads/main']);
+  initRepo({ cwd: repoA, homeDir: homeA, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+  const repoB = cloneGitRepo(remote);
+
+  execFileSync('git', ['-C', repoA, 'checkout', '-qb', 'feat/a']);
+  execFileSync('git', ['-C', repoA, 'commit', '--allow-empty', '-qm', 'Shared commit across machines']);
+  const sha = execFileSync('git', ['-C', repoA, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', repoA, 'push', '-q', 'origin', 'feat/a']);
+  execFileSync('git', ['-C', repoB, 'fetch', '-q', 'origin']);
+  const commit = { sha, timestamp: '2026-10-01T12:00:00.000Z', message: 'Shared commit across machines' };
+
+  let lsRemoteCalls = 0;
+  const racingExec = (cmd, args, opts) => {
+    if (cmd === 'git' && args.includes('ls-remote')) {
+      lsRemoteCalls += 1;
+      // The second refresh happens inside commitStateFiles: machine A wins the race here.
+      if (lsRemoteCalls === 2) recordCommitProgress({ cwd: repoA, homeDir: homeA, branch: 'feat/a', commit });
+    }
+    return execFileSync(cmd, args, opts);
+  };
+  const res = recordCommitProgress({ cwd: repoB, homeDir: homeB, branch: 'feat/b', commit, exec: racingExec });
+  assert.equal(res.alreadyRecorded, true);
+  assert.ok(lsRemoteCalls >= 2);
+
+  execFileSync('git', ['-C', repoB, 'fetch', '-q', 'origin']);
+  const fresh = cloneGitRepo(remote);
+  const units = loadState(fresh).tasks.filter((t) => (t.commits || []).some((c) => c.sha === sha));
+  assert.equal(units.length, 1);
+  assert.equal(units[0].id, 'feat/a');
+  assert.equal(loadState(fresh).tasks.some((t) => t.id === 'feat/b'), false);
+});
+
+test('legacy plain-path long unit files stay addressable and are updated in place', () => {
+  const repo = tempGitRepo();
+  const home = tempHome();
+  initRepo({ cwd: repo, homeDir: home, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+  const longId = `u/${'日'.repeat(60)}`; // 62 chars, > 180 bytes once percent-encoded
+  assert.ok(encodeURIComponent(longId).length > 180);
+  const legacyPath = `.docflow/units/${encodeURIComponent(longId)}.json`;
+  assert.notEqual(stateUnitPath(longId), legacyPath);
+  const unit = {
+    schemaVersion: 1, updatedAt: '2026-10-01T10:00:00.000Z',
+    task: {
+      id: longId, branch: longId, title: longId, task: 'Legacy long unit', started: '2026-10-01T10:00:00.000Z',
+      status: 'In progress', current: '', next: '', history: [], commits: [], pr: null, completed: null, outcome: null,
+    },
+  };
+  commitStateFiles({ repoRoot: repo, homeDir: home, files: { [legacyPath]: `${JSON.stringify(unit, null, 2)}\n` }, message: 'seed legacy' });
+
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', longId]);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Update legacy long unit']);
+  const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  recordCommitProgress({ cwd: repo, homeDir: home, branch: longId, commit: { sha, timestamp: '2026-10-01T12:00:00.000Z', message: 'Update legacy long unit' } });
+
+  const files = listStateFiles(repo, '.docflow/units');
+  assert.deepEqual(files, [legacyPath]);
+  const state = loadState(repo);
+  assert.equal(state.tasks.length, 1);
+  assert.equal(state.tasks[0].commits.length, 1);
+});
+
+test('explicit default branch (CI clones without origin/HEAD) is never a development unit', () => {
+  const repo = tempGitRepo();
+  initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+  const baseSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', repo, 'branch', '-f', 'main', baseSha]);
+  execFileSync('git', ['-C', repo, 'update-ref', 'refs/remotes/origin/develop', baseSha]);
+  assert.equal(isDevelopmentBranch('develop', { repoRoot: repo }), true); // unknown without a hint
+  assert.equal(isDevelopmentBranch('develop', { repoRoot: repo, defaultBranch: 'develop' }), false);
+  assert.throws(() => createBranchUnit({ cwd: repo, branch: 'develop', defaultBranch: 'develop' }), /not a development branch/);
+  const res = recordCommitProgress({
+    cwd: repo, branch: 'develop', defaultBranch: 'develop',
+    commit: { sha: baseSha, timestamp: '2026-10-01T12:00:00.000Z', message: 'baseline commit' },
+  });
+  assert.equal(res.ignored, true);
+  // Commits reachable only from the explicit default branch do not create units either.
+  execFileSync('git', ['-C', repo, 'checkout', '-q', '--detach', baseSha]);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Develop-only baseline']);
+  const devSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', repo, 'update-ref', 'refs/remotes/origin/develop', devSha]);
+  const viaBase = recordCommitProgress({
+    cwd: repo, branch: 'feat/from-develop', defaultBranch: 'develop',
+    commit: { sha: devSha, timestamp: '2026-10-01T12:00:00.000Z', message: 'Develop-only baseline' },
+  });
+  assert.equal(viaBase.ignored, true);
+  assert.equal(loadState(repo).tasks.length, 0);
 });

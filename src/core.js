@@ -12,6 +12,7 @@ import {
   runtimePath,
   stateFileRevision,
   stateStoreStatus,
+  resolveStateUnitPath,
   stateUnitPath,
   withStateLock,
 } from './state-store.js';
@@ -216,18 +217,21 @@ function validatePullRequest(pr) {
 
 const BASELINE_BRANCHES = ['main', 'master'];
 
-export function resolveBaseBranchName(repoRoot, exec = execFileSync) {
+export function resolveBaseBranchName(repoRoot, exec = execFileSync, defaultBranch = null) {
+  // An explicit name (CI clones have no origin/HEAD) wins over the symbolic-ref fallback.
+  const explicit = String(defaultBranch ?? process.env.DOCFLOW_DEFAULT_BRANCH ?? '').trim().replace(/^refs\/heads\//, '');
+  if (explicit) return explicit;
   const symRef = gitOutput(repoRoot, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], exec, { allowFailure: true }).trim();
   const prefix = 'refs/remotes/origin/';
   return symRef.startsWith(prefix) ? symRef.slice(prefix.length) : '';
 }
 
-export function isDevelopmentBranch(branch, { repoRoot = null, exec = execFileSync } = {}) {
+export function isDevelopmentBranch(branch, { repoRoot = null, exec = execFileSync, defaultBranch = null } = {}) {
   const name = String(branch ?? '').trim().replace(/^refs\/heads\//, '');
   if (!name) return false;
   const excluded = new Set([...BASELINE_BRANCHES, STATE_BRANCH]);
-  if (repoRoot) {
-    const base = resolveBaseBranchName(repoRoot, exec);
+  if (repoRoot || defaultBranch) {
+    const base = repoRoot ? resolveBaseBranchName(repoRoot, exec, defaultBranch) : String(defaultBranch).trim().replace(/^refs\/heads\//, '');
     if (base) excluded.add(base);
   }
   return !excluded.has(name);
@@ -385,9 +389,9 @@ function durableUnitText(task, updatedAt) {
 
 function writeTaskUnit(repoRoot, task, {
   updatedAt = isoNow(), homeDir = os.homedir(), exec = execFileSync, message = null,
-  expectedRevision = undefined,
+  expectedRevision = undefined, beforeCommit = null,
 } = {}) {
-  const unitPath = stateUnitPath(task.id);
+  const unitPath = resolveStateUnitPath(repoRoot, task.id, exec);
   return commitStateFiles({
     repoRoot,
     homeDir,
@@ -396,6 +400,7 @@ function writeTaskUnit(repoRoot, task, {
     expectedFiles: expectedRevision === undefined ? null : { [unitPath]: expectedRevision },
     message: message || `DocFlow: update ${task.id}`,
     allowCreate: false,
+    beforeCommit,
   });
 }
 
@@ -460,7 +465,7 @@ export function initRepo({
     };
     if (legacyState) {
       for (const task of legacyState.tasks) {
-        files[stateUnitPath(task.id)] = durableUnitText(task, legacyState.updatedAt || isoNow(now));
+        files[resolveStateUnitPath(repoRoot, task.id, exec)] = durableUnitText(task, legacyState.updatedAt || isoNow(now));
       }
     }
     commitStateFiles({
@@ -482,7 +487,7 @@ export function initRepo({
     const files = {};
     const expectedFiles = {};
     for (const task of legacyState.tasks) {
-      const unitPath = stateUnitPath(task.id);
+      const unitPath = resolveStateUnitPath(repoRoot, task.id, exec);
       const existing = readStateFile(repoRoot, unitPath, exec);
       if (existing == null) {
         files[unitPath] = durableUnitText(task, legacyState.updatedAt || isoNow(now));
@@ -539,7 +544,7 @@ export function startTask({
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
   const taskId = clean(id, 'task id', { required: true, max: MAX_TASK_ID_LENGTH });
-  const unitPath = stateUnitPath(taskId);
+  const unitPath = resolveStateUnitPath(repoRoot, taskId, exec);
   const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
   const state = loadState(repoRoot, exec);
   if (expectedRevision != null || state.tasks.some((entry) => entry.id === taskId)) {
@@ -614,7 +619,7 @@ export function checkpoint({
   // Capture the unit revision before loading the mutable snapshot. If another
   // actor advances the unit before this checkpoint commits, the CAS precondition
   // below rejects the stale write instead of silently dropping Current/History.
-  const expectedRevision = stateFileRevision(repoRoot, stateUnitPath(targetId), exec);
+  const expectedRevision = stateFileRevision(repoRoot, resolveStateUnitPath(repoRoot, targetId, exec), exec);
   const state = loadState(repoRoot, exec);
   const task = findTask(state, targetId);
   const newCurrent = clean(current, 'current', { required: true, max: 2000 });
@@ -685,11 +690,11 @@ export function resolveFullCommitSha(repoRoot, shaOrRev, exec = execFileSync) {
 
 // Every resolvable baseline tip: the repository default branch (origin/HEAD) plus
 // main/master, local and remote. A commit reachable from any of them is baseline work.
-function resolveBaseBranchShas(repoRoot, exec = execFileSync) {
+export function resolveBaseBranchShas(repoRoot, exec = execFileSync, defaultBranch = null) {
   const refs = [];
   const symRef = gitOutput(repoRoot, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], exec, { allowFailure: true }).trim();
   if (symRef) refs.push(symRef);
-  const defaultName = resolveBaseBranchName(repoRoot, exec);
+  const defaultName = resolveBaseBranchName(repoRoot, exec, defaultBranch);
   for (const name of new Set([defaultName, ...BASELINE_BRANCHES].filter(Boolean))) {
     refs.push(`refs/heads/${name}`, `refs/remotes/origin/${name}`);
   }
@@ -701,9 +706,9 @@ function resolveBaseBranchShas(repoRoot, exec = execFileSync) {
   return [...shas];
 }
 
-function isCommitReachableFromBase(repoRoot, sha, exec = execFileSync) {
+function isCommitReachableFromBase(repoRoot, sha, exec = execFileSync, defaultBranch = null) {
   if (!sha) return false;
-  const baseShas = resolveBaseBranchShas(repoRoot, exec);
+  const baseShas = resolveBaseBranchShas(repoRoot, exec, defaultBranch);
   if (!baseShas.length) {
     // If base branch cannot be resolved in git, fail closed: do not assume commits are unique
     return true;
@@ -727,16 +732,17 @@ export function createBranchUnit({
   now = new Date(),
   exec = execFileSync,
   homeDir = os.homedir(),
+  defaultBranch = null,
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
   const branchName = normalizeBranchName(branch);
-  if (!isDevelopmentBranch(branchName, { repoRoot, exec })) {
+  if (!isDevelopmentBranch(branchName, { repoRoot, exec, defaultBranch })) {
     throw new Error(`Branch '${branchName}' is not a development branch`);
   }
 
   return withStateLock(repoRoot, homeDir, exec, () => {
-    const unitPath = stateUnitPath(branchName);
+    const unitPath = resolveStateUnitPath(repoRoot, branchName, exec);
     const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
 
     const existing = getBranchUnit(repoRoot, branchName, exec);
@@ -760,7 +766,7 @@ export function createBranchUnit({
 
     // Fail closed: an unresolvable base, or a tip already on base, means the branch has no
     // commits of its own, so no empty unit is created.
-    if (isCommitReachableFromBase(repoRoot, tipSha, exec)) {
+    if (isCommitReachableFromBase(repoRoot, tipSha, exec, defaultBranch)) {
       return { repoRoot, task: null, created: false };
     }
 
@@ -809,11 +815,12 @@ export function recordCommitProgress({
   now = new Date(),
   exec = execFileSync,
   homeDir = os.homedir(),
+  defaultBranch = null,
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
   const branchName = normalizeBranchName(branch);
-  if (!isDevelopmentBranch(branchName, { repoRoot, exec })) {
+  if (!isDevelopmentBranch(branchName, { repoRoot, exec, defaultBranch })) {
     return { repoRoot, ignored: true, reason: `Branch '${branchName}' is not a development branch` };
   }
 
@@ -827,7 +834,7 @@ export function recordCommitProgress({
   }
   validCommit.sha = fullSha;
 
-  const unitPath = stateUnitPath(branchName);
+  const unitPath = resolveStateUnitPath(repoRoot, branchName, exec);
 
   // Pre-check outside lock for fast-path idempotency on already-recorded commits
   const initialGlobal = findCommitInState(repoRoot, validCommit.sha, exec);
@@ -842,9 +849,13 @@ export function recordCommitProgress({
   }
 
   return withStateLock(repoRoot, homeDir, exec, () => {
-    // Atomically re-check repository-wide deduplication inside the state lock:
-    // Guarantees that concurrent deliveries to DIFFERENT branches observe the serialized state
-    // and exactly one unit records the commit.
+    // Observe the newest published state before deciding. The local lock only serializes
+    // writers on this machine; across machines the fast-forward-only state push is the
+    // linearization point, so (a) refresh first and (b) re-assert the dedup precondition
+    // against the final synchronized parent right before the state commit (beforeCommit).
+    refreshStateFromOrigin({ repoRoot, homeDir, exec });
+
+    // Atomically re-check repository-wide deduplication inside the state lock.
     const existingGlobally = findCommitInState(repoRoot, validCommit.sha, exec);
     if (existingGlobally) {
       return {
@@ -864,7 +875,7 @@ export function recordCommitProgress({
     // Base reachability only guards creation of NEW units from baseline commits. A commit
     // for an already-known branch unit stays recordable even if delivery arrived after the
     // branch was merged and the commit became reachable from base.
-    if (!task && isCommitReachableFromBase(repoRoot, validCommit.sha, exec)) {
+    if (!task && isCommitReachableFromBase(repoRoot, validCommit.sha, exec, defaultBranch)) {
       return { repoRoot, ignored: true, reason: `Commit ${validCommit.sha.slice(0, 7)} is already reachable from base` };
     }
 
@@ -921,8 +932,17 @@ export function recordCommitProgress({
         exec,
         message: `DocFlow: record commit ${validCommit.sha.slice(0, 7)} on ${branchName}`,
         expectedRevision,
+        beforeCommit: () => {
+          if (findCommitInState(repoRoot, validCommit.sha, exec)) {
+            throw Object.assign(new Error('DocFlow commit already recorded by a concurrent writer'), { code: 'DOCFLOW_SHA_RECORDED' });
+          }
+        },
       });
     } catch (error) {
+      if (error?.code === 'DOCFLOW_SHA_RECORDED') {
+        const latest = findCommitInState(repoRoot, validCommit.sha, exec);
+        return { repoRoot, task: latest.task, commit: latest.commit, alreadyRecorded: true, created: false };
+      }
       if (error?.message && error.message.includes('DocFlow durable state changed concurrently for')) {
         // Re-read latest state: check both the target branch unit and repository-wide units
         const latestGlobal = findCommitInState(repoRoot, validCommit.sha, exec);
@@ -957,18 +977,19 @@ export function recordPullRequestEvent({
   now = new Date(),
   exec = execFileSync,
   homeDir = os.homedir(),
+  defaultBranch = null,
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
   const branchName = normalizeBranchName(branch);
-  if (!isDevelopmentBranch(branchName, { repoRoot, exec })) {
+  if (!isDevelopmentBranch(branchName, { repoRoot, exec, defaultBranch })) {
     return { repoRoot, ignored: true, reason: `Branch '${branchName}' is not a development branch` };
   }
 
   const validPr = validatePullRequest(pr);
 
   return withStateLock(repoRoot, homeDir, exec, () => {
-    const unitPath = stateUnitPath(branchName);
+    const unitPath = resolveStateUnitPath(repoRoot, branchName, exec);
     const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
 
     let task = getBranchUnit(repoRoot, branchName, exec);
@@ -982,7 +1003,7 @@ export function recordPullRequestEvent({
         return { repoRoot, ignored: true, reason: `Branch '${branchName}' does not exist in git` };
       }
 
-      if (isCommitReachableFromBase(repoRoot, tipSha, exec)) {
+      if (isCommitReachableFromBase(repoRoot, tipSha, exec, defaultBranch)) {
         return { repoRoot, ignored: true, reason: `Branch '${branchName}' tip is reachable from base branch` };
       }
 

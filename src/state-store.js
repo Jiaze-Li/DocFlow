@@ -255,6 +255,7 @@ export function commitStateFiles({
   homeDir = os.homedir(),
   exec = execFileSync,
   allowCreate = true,
+  beforeCommit = null,
 } = {}) {
   if (!repoRoot) throw new Error('repoRoot is required');
   if (!files || typeof files !== 'object' || Array.isArray(files)) throw new Error('files map is required');
@@ -281,6 +282,11 @@ export function commitStateFiles({
         }
       }
     }
+
+    // Final precondition evaluated against the freshly synchronized parent, so decisions
+    // made on an older view (e.g. repository-wide SHA dedup) cannot slip past a concurrent
+    // writer on another machine.
+    if (beforeCommit) beforeCommit({ parent });
 
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docflow-index-'));
     const indexPath = path.join(tempDir, 'index');
@@ -343,6 +349,20 @@ export function commitStateFiles({
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+}
+
+function plainUnitPath(id) {
+  return `.docflow/units/${encodeURIComponent(id)}.json`;
+}
+
+// Resolve the unit file for an id. Units written before long ids were hashed live at the
+// plain percent-encoded path; keep addressing them there so an update never forks a second
+// file for the same id.
+export function resolveStateUnitPath(repoRoot, taskId, exec = execFileSync) {
+  const canonical = stateUnitPath(taskId);
+  const legacy = plainUnitPath(String(taskId).trim());
+  if (legacy !== canonical && stateFileRevision(repoRoot, legacy, exec)) return legacy;
+  return canonical;
 }
 
 export function stateUnitPath(taskId) {
