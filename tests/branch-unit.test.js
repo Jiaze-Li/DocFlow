@@ -1,15 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import {
+  beginRound,
+  checkpoint,
+  configureGlobal,
   createBranchUnit,
   getBranchUnit,
   initRepo,
   isDevelopmentBranch,
+  loadRuntime,
   loadState,
   recordCommitProgress,
   recordPullRequestEvent,
+  syncObsidian,
+  unitMarkers,
 } from '../src/core.js';
 import { tempGitRepo, tempHome } from './helpers.js';
 
@@ -18,7 +25,8 @@ test('isDevelopmentBranch accurately filters branches', () => {
   assert.equal(isDevelopmentBranch('docflow-state'), false);
   assert.equal(isDevelopmentBranch('refs/heads/main'), false);
   assert.equal(isDevelopmentBranch('refs/heads/docflow-state'), false);
-  assert.equal(isDevelopmentBranch('master'), true); // Contract: only main and docflow-state are excluded
+  assert.equal(isDevelopmentBranch('master'), false);
+  assert.equal(isDevelopmentBranch('refs/heads/master'), false);
   assert.equal(isDevelopmentBranch('feat/new-ui'), true);
   assert.equal(isDevelopmentBranch('fix/issue-123'), true);
   assert.equal(isDevelopmentBranch('refs/heads/fix/issue-123'), true);
@@ -364,7 +372,7 @@ test('deterministic interleaving CAS race for identical commit SHA returns alrea
       const target = args[args.length - 1];
       if (typeof target === 'string' && target.endsWith(':.docflow/units/feat%2Frace-sha.json')) {
         revParseCountB++;
-        if (revParseCountB === 3) {
+        if (revParseCountB === 2) {
           return 'stale-mismatched-revision\n';
         }
       }
@@ -769,4 +777,120 @@ test('recordCommitProgress rejects non-existent or invalid commit SHAs without c
   // Durable state must remain empty (no ghost units created)
   const state = loadState(repo);
   assert.equal(state.tasks.length, 0);
+});
+
+test('master and the resolved default branch are never development units', () => {
+  const repo = tempGitRepo();
+  initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+  const baseSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  for (const name of ['master', 'main', 'docflow-state']) {
+    const res = recordCommitProgress({
+      cwd: repo, branch: name,
+      commit: { sha: baseSha, timestamp: '2026-10-01T12:00:00.000Z', message: 'baseline' },
+    });
+    assert.equal(res.ignored, true);
+    assert.throws(() => createBranchUnit({ cwd: repo, branch: name }), /not a development branch/);
+  }
+
+  // A repository whose default branch is neither main nor master.
+  execFileSync('git', ['-C', repo, 'update-ref', 'refs/remotes/origin/trunk', baseSha]);
+  execFileSync('git', ['-C', repo, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk']);
+  assert.equal(isDevelopmentBranch('trunk', { repoRoot: repo }), false);
+  assert.equal(isDevelopmentBranch('trunk'), true);
+  assert.equal(isDevelopmentBranch('feat/x', { repoRoot: repo }), true);
+  assert.throws(() => createBranchUnit({ cwd: repo, branch: 'trunk' }), /not a development branch/);
+  assert.equal(loadState(repo).tasks.length, 0);
+});
+
+test('baseline-only commits on master create no unit', () => {
+  const repo = tempGitRepo();
+  initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+  execFileSync('git', ['-C', repo, 'checkout', '-qB', 'master']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'baseline work']);
+  const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/baseline-only']);
+  const res = recordCommitProgress({
+    cwd: repo, branch: 'feat/baseline-only',
+    commit: { sha, timestamp: '2026-10-01T12:00:00.000Z', message: 'baseline work' },
+  });
+  assert.equal(res.ignored, true);
+  assert.equal(loadState(repo).tasks.length, 0);
+});
+
+test('delayed commit for a known branch is recorded after merge/base advancement', () => {
+  const repo = tempGitRepo();
+  initRepo({ cwd: repo, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+  execFileSync('git', ['-C', repo, 'checkout', '-qB', 'main']);
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/delayed']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'first delivered']);
+  const first = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'second delayed']);
+  const second = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  recordCommitProgress({
+    cwd: repo, branch: 'feat/delayed',
+    commit: { sha: first, timestamp: '2026-10-01T12:00:00.000Z', message: 'first delivered' },
+  });
+  recordPullRequestEvent({
+    cwd: repo, branch: 'feat/delayed',
+    pr: { number: 9, state: 'closed', merged: true, mergedAt: '2026-10-01T13:00:00.000Z' },
+  });
+  // Merge into base: the delayed commit is now reachable from main.
+  execFileSync('git', ['-C', repo, 'checkout', '-q', 'main']);
+  execFileSync('git', ['-C', repo, 'merge', '-q', '--ff-only', 'feat/delayed']);
+
+  const late = recordCommitProgress({
+    cwd: repo, branch: 'feat/delayed',
+    commit: { sha: second, timestamp: '2026-10-01T12:30:00.000Z', message: 'second delayed' },
+  });
+  assert.equal(late.ignored, undefined);
+  assert.equal(late.alreadyRecorded, false);
+  const task = loadState(repo).tasks[0];
+  assert.deepEqual(task.commits.map((c) => c.sha), [first, second]);
+  assert.equal(task.status, 'Completed');
+  assert.equal(task.outcome, 'Merged');
+
+  // Unknown branch + baseline commit is still rejected.
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/unknown']);
+  const bogus = recordCommitProgress({
+    cwd: repo, branch: 'feat/unknown',
+    commit: { sha: second, timestamp: '2026-10-01T12:30:00.000Z', message: 'x' },
+  });
+  assert.equal(bogus.alreadyRecorded, true); // repo-wide dedup wins, no new unit
+  assert.equal(loadState(repo).tasks.length, 1);
+});
+
+test('200-character branch ids work through state, runtime, checkpoint, markers and projection', () => {
+  const repo = tempGitRepo();
+  const home = tempHome();
+  const vault = path.join(home, 'vault');
+  configureGlobal({ homeDir: home, vault, projectFolder: 'Projects' });
+  initRepo({ cwd: repo, homeDir: home, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+
+  const longBranch = `feat/${'é%x/'.repeat(5)}${'a'.repeat(200 - 5 - 20)}`;
+  assert.equal(longBranch.length, 200);
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', longBranch]);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Long branch work']);
+  const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  const rec = recordCommitProgress({
+    cwd: repo, homeDir: home, branch: longBranch,
+    commit: { sha, timestamp: '2026-10-01T12:00:00.000Z', message: 'Long branch work' },
+  });
+  assert.equal(rec.created, true);
+  assert.equal(loadState(repo).tasks[0].id, longBranch);
+
+  const sync = syncObsidian({ cwd: repo, homeDir: home });
+  assert.equal(sync.skipped, false);
+  const note = fs.readFileSync(sync.path, 'utf8');
+  assert.ok(note.includes('Long branch work'));
+  assert.ok(note.includes(unitMarkers(longBranch).begin));
+
+  const begun = beginRound({ cwd: repo, id: longBranch });
+  assert.equal(begun.session.taskId, longBranch);
+  const cp = checkpoint({ cwd: repo, homeDir: home, id: longBranch, current: 'Checkpointed long id' });
+  assert.equal(cp.runtime.activeTaskId, longBranch);
+  assert.equal(loadState(repo).activeTaskId, longBranch);
+  assert.equal(loadRuntime(repo).activeTaskId, longBranch);
 });

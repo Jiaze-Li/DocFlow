@@ -30,6 +30,9 @@ const DURABLE_PROJECT_PATH = '.docflow/project.md';
 const DURABLE_UNITS_PREFIX = '.docflow/units';
 
 export const STATUS_VALUES = new Set(['In progress', 'Waiting', 'Paused', 'Completed', 'Abandoned']);
+// Single limit for unit ids, branch names, runtime/active ids and marker keys so state
+// written by one operation is always readable and projectable by every other.
+export const MAX_TASK_ID_LENGTH = 200;
 const TERMINAL_STATUSES = new Set(['Completed', 'Abandoned']);
 
 function clean(value, label, { required = false, max = 4000 } = {}) {
@@ -170,7 +173,7 @@ function validateCommitProgress(commit) {
   const rawSha = clean(commit.sha, 'commit.sha', { required: true, max: 64 });
   if (!/^[0-9a-f]{7,64}$/i.test(rawSha)) throw new Error(`Invalid commit sha: ${rawSha}`);
   const sha = rawSha.toLowerCase();
-  const branch = clean(commit.branch, 'commit.branch', { required: true, max: 200 });
+  const branch = clean(commit.branch, 'commit.branch', { required: true, max: MAX_TASK_ID_LENGTH });
   const timestamp = normalizeIsoDate(commit.timestamp, 'commit.timestamp', { required: true });
   const message = clean(commit.message, 'commit.message', { required: true, max: 2000 });
   const summary = commit.summary == null ? null : clean(commit.summary, 'commit.summary', { max: 2000 });
@@ -198,16 +201,28 @@ function validatePullRequest(pr) {
   };
 }
 
-export function isDevelopmentBranch(branch) {
+const BASELINE_BRANCHES = ['main', 'master'];
+
+export function resolveBaseBranchName(repoRoot, exec = execFileSync) {
+  const symRef = gitOutput(repoRoot, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], exec, { allowFailure: true }).trim();
+  const prefix = 'refs/remotes/origin/';
+  return symRef.startsWith(prefix) ? symRef.slice(prefix.length) : '';
+}
+
+export function isDevelopmentBranch(branch, { repoRoot = null, exec = execFileSync } = {}) {
   const name = String(branch ?? '').trim().replace(/^refs\/heads\//, '');
   if (!name) return false;
-  const excluded = new Set(['main', STATE_BRANCH]);
+  const excluded = new Set([...BASELINE_BRANCHES, STATE_BRANCH]);
+  if (repoRoot) {
+    const base = resolveBaseBranchName(repoRoot, exec);
+    if (base) excluded.add(base);
+  }
   return !excluded.has(name);
 }
 
 function validateTask(task) {
   if (!task || typeof task !== 'object' || Array.isArray(task)) throw new Error('Invalid DocFlow task');
-  task.id = clean(task.id, 'task.id', { required: true, max: 200 });
+  task.id = clean(task.id, 'task.id', { required: true, max: MAX_TASK_ID_LENGTH });
   task.title = clean(task.title, 'task.title', { required: true, max: 300 });
   task.task = clean(task.task, 'task.task', { required: true, max: 2000 });
   task.started = clean(task.started, 'task.started', { required: true, max: 80 });
@@ -223,7 +238,7 @@ function validateTask(task) {
   task.outcome = task.outcome == null ? null : clean(task.outcome, 'task.outcome', { required: true, max: 300 });
 
   if (task.branch != null) {
-    task.branch = clean(task.branch, 'task.branch', { required: true, max: 200 });
+    task.branch = clean(task.branch, 'task.branch', { required: true, max: MAX_TASK_ID_LENGTH });
   }
 
   if (task.commits != null) {
@@ -256,7 +271,7 @@ export function validateState(state) {
     seen.add(normalized.id);
     return normalized;
   });
-  state.activeTaskId = state.activeTaskId == null ? null : clean(state.activeTaskId, 'activeTaskId', { required: true, max: 120 });
+  state.activeTaskId = state.activeTaskId == null ? null : clean(state.activeTaskId, 'activeTaskId', { required: true, max: MAX_TASK_ID_LENGTH });
   if (state.activeTaskId && !seen.has(state.activeTaskId)) throw new Error('activeTaskId does not exist');
   state.updatedAt = state.updatedAt == null ? null : clean(state.updatedAt, 'updatedAt', { required: true, max: 80 });
   return state;
@@ -268,7 +283,7 @@ export function validateRuntime(runtime) {
   }
   runtime.activeTaskId = runtime.activeTaskId == null
     ? null
-    : clean(runtime.activeTaskId, 'runtime.activeTaskId', { required: true, max: 120 });
+    : clean(runtime.activeTaskId, 'runtime.activeTaskId', { required: true, max: MAX_TASK_ID_LENGTH });
   for (const key of ['activeSession', 'lastCheckpoint']) {
     if (runtime[key] != null && (typeof runtime[key] !== 'object' || Array.isArray(runtime[key]))) throw new Error(`Invalid ${key}`);
   }
@@ -510,7 +525,7 @@ export function startTask({
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
-  const taskId = clean(id, 'task id', { required: true, max: 120 });
+  const taskId = clean(id, 'task id', { required: true, max: MAX_TASK_ID_LENGTH });
   const unitPath = stateUnitPath(taskId);
   const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
   const state = loadState(repoRoot, exec);
@@ -541,7 +556,7 @@ export function startTask({
 }
 
 function findTask(state, id) {
-  const taskId = clean(id || state.activeTaskId, 'task id', { required: true, max: 120 });
+  const taskId = clean(id || state.activeTaskId, 'task id', { required: true, max: MAX_TASK_ID_LENGTH });
   const task = state.tasks.find((entry) => entry.id === taskId);
   if (!task) throw new Error(`Unknown DocFlow task: ${taskId}`);
   return task;
@@ -572,7 +587,7 @@ export function checkpoint({
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   const runtime = loadRuntime(repoRoot, exec);
-  const explicitId = id == null ? null : clean(id, 'task id', { required: true, max: 120 });
+  const explicitId = id == null ? null : clean(id, 'task id', { required: true, max: MAX_TASK_ID_LENGTH });
   if (runtime.activeSession && explicitId && explicitId !== runtime.activeSession.taskId) {
     throw new Error(
       `Cannot checkpoint task ${explicitId} while an uncheckpointed round is active for ${runtime.activeSession.taskId}`,
@@ -581,7 +596,7 @@ export function checkpoint({
   const targetId = clean(
     runtime.activeSession?.taskId || explicitId || runtime.activeTaskId,
     'task id',
-    { required: true, max: 120 },
+    { required: true, max: MAX_TASK_ID_LENGTH },
   );
   // Capture the unit revision before loading the mutable snapshot. If another
   // actor advances the unit before this checkpoint commits, the CAS precondition
@@ -629,7 +644,7 @@ export function checkpoint({
 }
 
 export function getBranchUnit(repoRoot, branch, exec = execFileSync) {
-  const branchName = clean(branch, 'branch', { required: true, max: 200 }).replace(/^refs\/heads\//, '');
+  const branchName = clean(branch, 'branch', { required: true, max: MAX_TASK_ID_LENGTH }).replace(/^refs\/heads\//, '');
   const state = loadState(repoRoot, exec);
   return state.tasks.find((t) => t.branch === branchName || (t.id === branchName && t.branch == null)) || null;
 }
@@ -655,42 +670,42 @@ export function resolveFullCommitSha(repoRoot, shaOrRev, exec = execFileSync) {
   return resolved.toLowerCase();
 }
 
-function resolveBaseBranchSha(repoRoot, exec = execFileSync) {
-  for (const ref of [
-    'refs/heads/main^{commit}',
-    'refs/remotes/origin/main^{commit}',
-    'refs/heads/master^{commit}',
-    'refs/remotes/origin/master^{commit}',
-  ]) {
-    const sha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', ref], exec, { allowFailure: true }).trim();
-    if (sha) return sha;
-  }
+// Every resolvable baseline tip: the repository default branch (origin/HEAD) plus
+// main/master, local and remote. A commit reachable from any of them is baseline work.
+function resolveBaseBranchShas(repoRoot, exec = execFileSync) {
+  const refs = [];
   const symRef = gitOutput(repoRoot, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], exec, { allowFailure: true }).trim();
-  if (symRef) {
-    const sha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', `${symRef}^{commit}`], exec, { allowFailure: true }).trim();
-    if (sha) return sha;
+  if (symRef) refs.push(symRef);
+  const defaultName = resolveBaseBranchName(repoRoot, exec);
+  for (const name of new Set([defaultName, ...BASELINE_BRANCHES].filter(Boolean))) {
+    refs.push(`refs/heads/${name}`, `refs/remotes/origin/${name}`);
   }
-  return '';
+  const shas = new Set();
+  for (const ref of refs) {
+    const sha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], exec, { allowFailure: true }).trim();
+    if (sha) shas.add(sha);
+  }
+  return [...shas];
 }
 
 function isCommitReachableFromBase(repoRoot, sha, exec = execFileSync) {
   if (!sha) return false;
-  const baseSha = resolveBaseBranchSha(repoRoot, exec);
-  if (!baseSha) {
+  const baseShas = resolveBaseBranchShas(repoRoot, exec);
+  if (!baseShas.length) {
     // If base branch cannot be resolved in git, fail closed: do not assume commits are unique
     return true;
   }
-  try {
-    exec('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', sha, baseSha], { stdio: 'ignore' });
-    return true;
-  } catch (error) {
-    // Exit code 1 means NOT ancestor (valid check, commit is indeed not reachable from base)
-    if (error && typeof error.status === 'number' && error.status === 1) {
-      return false;
+  for (const baseSha of baseShas) {
+    try {
+      exec('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', sha, baseSha], { stdio: 'ignore' });
+      return true;
+    } catch (error) {
+      // Exit code 1 means NOT ancestor of this base tip. Anything else (e.g. 128 for an
+      // invalid object) fails closed.
+      if (!(error && typeof error.status === 'number' && error.status === 1)) return true;
     }
-    // Any other error (e.g. exit code 128 for non-existent/invalid object) fails closed
-    return true;
   }
+  return false;
 }
 
 export function createBranchUnit({
@@ -702,8 +717,8 @@ export function createBranchUnit({
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
-  const branchName = clean(branch, 'branch', { required: true, max: 200 }).replace(/^refs\/heads\//, '');
-  if (!isDevelopmentBranch(branchName)) {
+  const branchName = clean(branch, 'branch', { required: true, max: MAX_TASK_ID_LENGTH }).replace(/^refs\/heads\//, '');
+  if (!isDevelopmentBranch(branchName, { repoRoot, exec })) {
     throw new Error(`Branch '${branchName}' is not a development branch`);
   }
 
@@ -730,18 +745,10 @@ export function createBranchUnit({
       return { repoRoot, task: tipRecorded.task, created: false };
     }
 
-    const baseSha = resolveBaseBranchSha(repoRoot, exec);
-    if (!baseSha) {
-      // Fail closed: if repository base branch cannot be resolved, reject empty unit creation
+    // Fail closed: an unresolvable base, or a tip already on base, means the branch has no
+    // commits of its own, so no empty unit is created.
+    if (isCommitReachableFromBase(repoRoot, tipSha, exec)) {
       return { repoRoot, task: null, created: false };
-    }
-
-    try {
-      exec('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', tipSha, baseSha], { stdio: 'ignore' });
-      // tipSha is an ancestor of or equal to baseSha -> branch has no commits of its own beyond base
-      return { repoRoot, task: null, created: false };
-    } catch (e) {
-      // Exit code 1 means NOT ancestor; allow execution to proceed
     }
 
     const entry = validateTask({
@@ -792,8 +799,8 @@ export function recordCommitProgress({
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
-  const branchName = clean(branch, 'branch', { required: true, max: 200 }).replace(/^refs\/heads\//, '');
-  if (!isDevelopmentBranch(branchName)) {
+  const branchName = clean(branch, 'branch', { required: true, max: MAX_TASK_ID_LENGTH }).replace(/^refs\/heads\//, '');
+  if (!isDevelopmentBranch(branchName, { repoRoot, exec })) {
     return { repoRoot, ignored: true, reason: `Branch '${branchName}' is not a development branch` };
   }
 
@@ -807,14 +814,7 @@ export function recordCommitProgress({
   }
   validCommit.sha = fullSha;
 
-  // Check if commit is already reachable from base branch. Commits on base are never recorded as branch
-  // progress, and newly pushed branches whose tip or commits are already on base do not create units.
-  if (isCommitReachableFromBase(repoRoot, validCommit.sha, exec)) {
-    return { repoRoot, ignored: true, reason: `Commit ${validCommit.sha.slice(0, 7)} is already reachable from base` };
-  }
-
   const unitPath = stateUnitPath(branchName);
-  const initialExpectedRevision = stateFileRevision(repoRoot, unitPath, exec);
 
   // Pre-check outside lock for fast-path idempotency on already-recorded commits
   const initialGlobal = findCommitInState(repoRoot, validCommit.sha, exec);
@@ -847,6 +847,13 @@ export function recordCommitProgress({
 
     let task = getBranchUnit(repoRoot, branchName, exec);
     let created = false;
+
+    // Base reachability only guards creation of NEW units from baseline commits. A commit
+    // for an already-known branch unit stays recordable even if delivery arrived after the
+    // branch was merged and the commit became reachable from base.
+    if (!task && isCommitReachableFromBase(repoRoot, validCommit.sha, exec)) {
+      return { repoRoot, ignored: true, reason: `Commit ${validCommit.sha.slice(0, 7)} is already reachable from base` };
+    }
 
     if (!task) {
       task = validateTask({
@@ -940,8 +947,8 @@ export function recordPullRequestEvent({
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
-  const branchName = clean(branch, 'branch', { required: true, max: 200 }).replace(/^refs\/heads\//, '');
-  if (!isDevelopmentBranch(branchName)) {
+  const branchName = clean(branch, 'branch', { required: true, max: MAX_TASK_ID_LENGTH }).replace(/^refs\/heads\//, '');
+  if (!isDevelopmentBranch(branchName, { repoRoot, exec })) {
     return { repoRoot, ignored: true, reason: `Branch '${branchName}' is not a development branch` };
   }
 
@@ -1064,7 +1071,7 @@ export function projectStatus({ cwd = process.cwd(), exec = execFileSync } = {})
 }
 
 function unitMarkerKey(taskId) {
-  return encodeURIComponent(clean(taskId, 'task id', { required: true, max: 120 }));
+  return encodeURIComponent(clean(taskId, 'task id', { required: true, max: MAX_TASK_ID_LENGTH }));
 }
 
 export function unitMarkers(taskId) {
