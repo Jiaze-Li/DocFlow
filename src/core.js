@@ -168,6 +168,12 @@ function normalizeIsoDate(value, label, { required = false } = {}) {
   return text;
 }
 
+// Strip the ref prefix first (GitHub sends refs/heads/<name>), then apply the id limit.
+export function normalizeBranchName(branch) {
+  const stripped = clean(branch, 'branch', { required: true, max: MAX_TASK_ID_LENGTH + 11 }).replace(/^refs\/heads\//, '');
+  return clean(stripped, 'branch', { required: true, max: MAX_TASK_ID_LENGTH });
+}
+
 export function commitSubject(message) {
   const line = String(message ?? '').replace(/\r/g, '').split('\n').map((l) => l.trim()).find(Boolean) || '';
   return line.length > 2000 ? `${line.slice(0, 1999)}…` : line;
@@ -651,7 +657,7 @@ export function checkpoint({
 }
 
 export function getBranchUnit(repoRoot, branch, exec = execFileSync) {
-  const branchName = clean(branch, 'branch', { required: true, max: MAX_TASK_ID_LENGTH }).replace(/^refs\/heads\//, '');
+  const branchName = normalizeBranchName(branch);
   const state = loadState(repoRoot, exec);
   return state.tasks.find((t) => t.branch === branchName || (t.id === branchName && t.branch == null)) || null;
 }
@@ -724,7 +730,7 @@ export function createBranchUnit({
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
-  const branchName = clean(branch, 'branch', { required: true, max: MAX_TASK_ID_LENGTH }).replace(/^refs\/heads\//, '');
+  const branchName = normalizeBranchName(branch);
   if (!isDevelopmentBranch(branchName, { repoRoot, exec })) {
     throw new Error(`Branch '${branchName}' is not a development branch`);
   }
@@ -806,7 +812,7 @@ export function recordCommitProgress({
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
-  const branchName = clean(branch, 'branch', { required: true, max: MAX_TASK_ID_LENGTH }).replace(/^refs\/heads\//, '');
+  const branchName = normalizeBranchName(branch);
   if (!isDevelopmentBranch(branchName, { repoRoot, exec })) {
     return { repoRoot, ignored: true, reason: `Branch '${branchName}' is not a development branch` };
   }
@@ -954,7 +960,7 @@ export function recordPullRequestEvent({
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
-  const branchName = clean(branch, 'branch', { required: true, max: MAX_TASK_ID_LENGTH }).replace(/^refs\/heads\//, '');
+  const branchName = normalizeBranchName(branch);
   if (!isDevelopmentBranch(branchName, { repoRoot, exec })) {
     return { repoRoot, ignored: true, reason: `Branch '${branchName}' is not a development branch` };
   }

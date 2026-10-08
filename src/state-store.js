@@ -348,5 +348,10 @@ export function commitStateFiles({
 export function stateUnitPath(taskId) {
   const id = String(taskId ?? '').trim();
   if (!id) throw new Error('task id is required');
-  return `.docflow/units/${encodeURIComponent(id)}.json`;
+  const encoded = encodeURIComponent(id);
+  // Percent-encoding can inflate an id several-fold; keep file names within common 255-byte
+  // filesystem limits (in case the state branch is ever checked out). The unit's real id
+  // always lives inside the JSON, never in the file name.
+  if (Buffer.byteLength(encoded) <= 180) return `.docflow/units/${encoded}.json`;
+  return `.docflow/units/~${createHash('sha256').update(id).digest('hex')}.json`;
 }

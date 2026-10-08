@@ -18,6 +18,7 @@ import {
   syncObsidian,
   unitMarkers,
 } from '../src/core.js';
+import { stateUnitPath } from '../src/state-store.js';
 import { tempGitRepo, tempHome } from './helpers.js';
 
 test('isDevelopmentBranch accurately filters branches', () => {
@@ -908,4 +909,44 @@ test('multiline commit messages record only the first non-empty line as progress
   assert.equal(task.current, 'Add retry to uploads');
   assert.equal(task.commits[0].message, 'Add retry to uploads');
   assert.equal(task.next, '');
+});
+
+test('worst-case encoded 200-character ids and refs/heads/ prefixed 200-char names work end to end', () => {
+  const repo = tempGitRepo();
+  const home = tempHome();
+  const vault = path.join(home, 'vault');
+  configureGlobal({ homeDir: home, vault, projectFolder: 'Projects' });
+  initRepo({ cwd: repo, homeDir: home, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+
+  const slashHeavy = Array.from({ length: 100 }, () => 'a').join('/').slice(0, 199) + 'b'; // a/a/a/…
+  const unicodeHeavy = `u/${'日'.repeat(198)}`;
+  for (const name of [slashHeavy, unicodeHeavy]) {
+    assert.equal(name.length, 200);
+    assert.ok(!name.endsWith('/') && !name.includes('//'));
+  }
+  const base = execFileSync('git', ['-C', repo, 'symbolic-ref', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+  // Distinct commits per name, branch passed in GitHub's refs/heads/ form.
+  const shas = [];
+  for (const [i, name] of [slashHeavy, unicodeHeavy].entries()) {
+    execFileSync('git', ['-C', repo, 'checkout', '-q', '-B', `side${i}`, base]);
+    execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', `Work on long branch ${i}`]);
+    shas.push(execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim());
+    const res = recordCommitProgress({
+      cwd: repo, homeDir: home, branch: `refs/heads/${name}`,
+      commit: { sha: shas[i], timestamp: '2026-10-01T12:00:00.000Z', message: `Work on long branch ${i}` },
+    });
+    assert.equal(res.created, true);
+    assert.equal(res.task.id, name);
+  }
+  const state = loadState(repo);
+  assert.deepEqual(state.tasks.map((t) => t.id).sort(), [slashHeavy, unicodeHeavy].sort());
+  for (const name of [slashHeavy, unicodeHeavy]) {
+    assert.ok(getBranchUnit(repo, `refs/heads/${name}`));
+    assert.ok(Buffer.byteLength(stateUnitPath(name)) < 255);
+    createBranchUnit({ cwd: repo, homeDir: home, branch: `refs/heads/${name}` });
+    beginRound({ cwd: repo, id: name });
+    checkpoint({ cwd: repo, homeDir: home, id: name, current: 'Checkpoint long id' });
+  }
+  assert.equal(syncObsidian({ cwd: repo, homeDir: home }).updatedTaskIds.length, 2);
+  assert.equal(loadState(repo).tasks.length, 2);
 });
