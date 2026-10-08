@@ -22,12 +22,10 @@ on:
 
 # docflow-state is the only ref this job writes. GITHUB_TOKEN pushes never trigger workflows
 # and docflow-state is ignored above, so state updates cannot recurse into business progress.
+# No concurrency group on purpose: GitHub cancels queued runs in a group, and a cancelled run
+# would drop its event. Concurrent runs are safe (fast-forward-only state push + retry).
 permissions:
   contents: write
-
-concurrency:
-  group: docflow-state
-  cancel-in-progress: false
 
 jobs:
   ingest:

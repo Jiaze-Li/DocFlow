@@ -164,7 +164,7 @@ function loadCommitFacts(repoRoot, shas, exec) {
   });
 }
 
-function withRetry(fn, { attempts = 4, delayMs = 400 } = {}) {
+function withRetry(fn, { attempts = 8, delayMs = 300 } = {}) {
   let last;
   for (let i = 0; i < attempts; i += 1) {
     try {
@@ -172,7 +172,7 @@ function withRetry(fn, { attempts = 4, delayMs = 400 } = {}) {
     } catch (error) {
       last = error;
       if (!/durable state|diverged|push failed|Timed out waiting/i.test(String(error?.message))) throw error;
-      sleepSync(delayMs * (i + 1));
+      sleepSync(delayMs * (i + 1) + Math.floor(Math.random() * delayMs));
     }
   }
   throw last;
