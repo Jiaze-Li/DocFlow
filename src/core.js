@@ -1171,7 +1171,10 @@ export function recordPullRequestEvent({
     // newest one already applied is stale and must not change the lifecycle (a merged event
     // is terminal and always applies).
     const lastAppliedAt = task.pr?.updatedAt ?? null;
-    const stale = !validPr.merged && Boolean(validPr.updatedAt && lastAppliedAt && validPr.updatedAt < lastAppliedAt);
+    // A 'reopened' event is judged against the recorded CLOSURE time instead (below): events are
+    // delivered out of order, so a genuine reopen may legitimately trail a newer synchronize.
+    const stale = !validPr.merged && action !== 'reopened'
+      && Boolean(validPr.updatedAt && lastAppliedAt && validPr.updatedAt < lastAppliedAt);
     if (stale && !created) {
       return { repoRoot, task, created: false, ignored: true, reason: 'Stale pull request event ignored (older than the last applied event)' };
     }
@@ -1180,6 +1183,8 @@ export function recordPullRequestEvent({
       ...(task.pr || {}),
       ...validPr,
       merged,
+      // The recorded PR time only moves forward.
+      ...(lastAppliedAt && (!validPr.updatedAt || validPr.updatedAt < lastAppliedAt) ? { updatedAt: lastAppliedAt } : {}),
     };
 
     if (merged) {

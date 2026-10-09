@@ -126,7 +126,7 @@ function preActivationTips(repoRoot, branch, activation, exec) {
 // the tip on a non-first parent. The branch's own commits are then exactly `tip --not M^1`,
 // so no base history can enter. Anything else (a branch cut from base, a fast-forward or a
 // base commit with no merge evidence) yields nothing, exactly as before.
-function mergedBranchCommits(repoRoot, after, baseShas, exec) {
+function mergedBranchCommits(repoRoot, after, baseShas, exec, { boundary = null } = {}) {
   for (const base of baseShas) {
     if (!isAncestor(repoRoot, after, base, exec)) continue;
     const chain = git(repoRoot, ['rev-list', '--first-parent', '--ancestry-path', `${after}..${base}`], exec, { allowFailure: true })
@@ -137,7 +137,7 @@ function mergedBranchCommits(repoRoot, after, baseShas, exec) {
     if (parents.length < 2) continue;
     const viaSecondParent = parents.slice(1).some((p) => isAncestor(repoRoot, after, p, exec));
     if (!viaSecondParent) continue;
-    const walked = git(repoRoot, ['rev-list', '--topo-order', '--reverse', after, '--not', parents[0]], exec)
+    const walked = git(repoRoot, ['rev-list', '--topo-order', '--reverse', after, '--not', parents[0], ...(boundary ? [boundary] : [])], exec)
       .split('\n').map((l) => l.trim()).filter(Boolean);
     if (!walked.length || walked.length > MAX_MERGED_WALK) continue;
     return walked;
@@ -177,8 +177,15 @@ export function selectNewCommits(repoRoot, {
   const baseTips = resolveBaseBranchShas(repoRoot, exec, defaultBranch);
   const preExistingBranch = activation.branches.includes(branch);
   if (!unit?.commits?.length && baseTips.some((base) => isAncestor(repoRoot, after, base, exec))) {
-    const owned = mergedBranchCommits(repoRoot, after, baseTips, exec);
-    if (owned.length) return { mode: 'create-merged', shas: owned, owned };
+    // A branch that predates activation may only contribute what happened after its
+    // activation-time tip; without a usable anchor its boundary cannot be proven, so the
+    // merged-branch path is not taken (forward-only behaviour below applies).
+    const anchor = activation.tips?.[branch] ?? null;
+    const anchorUsable = Boolean(anchor) && commitExists(repoRoot, anchor, exec) && isAncestor(repoRoot, anchor, after, exec);
+    if (!preExistingBranch || anchorUsable) {
+      const owned = mergedBranchCommits(repoRoot, after, baseTips, exec, { boundary: preExistingBranch ? anchor : null });
+      if (owned.length) return { mode: 'create-merged', shas: owned, owned, ...(preExistingBranch ? { recovery: { anchored: true } } : {}) };
+    }
   }
   if (unit?.commits?.length) {
     const baseShas = resolveBaseBranchShas(repoRoot, exec, defaultBranch);

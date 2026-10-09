@@ -176,6 +176,60 @@ test('F2: an anchor that is no longer an ancestor (rewritten history) is reporte
   assert.deepEqual(res.recorded, [rewritten]);
 });
 
+test('F1+F2: a merged PRE-EXISTING branch records only post-activation commits, never its pre-activation history', () => {
+  const w = world({
+    activate: false,
+    before: ({ dev }) => {
+      git(dev, 'checkout', '-q', '-b', 'feat/old-merged');
+      commitOn(dev, 'Pre-activation one');
+      commitOn(dev, 'Pre-activation two');
+      git(dev, 'push', '-q', 'origin', 'feat/old-merged');
+    },
+  });
+  const anchor = head(w.dev);
+  const [p1, p2] = git(w.dev, 'rev-list', '--reverse', '-n', '2', 'HEAD').split('\n');
+  setupRepo({ cwd: w.dev, homeDir: w.home });
+  const fresh = commitOn(w.dev, 'Post-activation work');
+  git(w.dev, 'push', '-q', 'origin', 'feat/old-merged');
+  git(w.dev, 'checkout', '-q', 'main');
+  git(w.dev, 'merge', '-q', '--no-ff', '-m', 'Merge feat/old-merged', 'feat/old-merged');
+  git(w.dev, 'push', '-q', 'origin', 'main');
+  const res = w.ingest({ ref: 'refs/heads/feat/old-merged', before: anchor, after: fresh });
+  assert.deepEqual(res.recorded, [fresh]);
+  const shas = w.fresh().tasks.find((t) => t.id === 'feat/old-merged').commits.map((c) => c.sha);
+  assert.deepEqual(shas, [fresh]);
+  assert.equal(shas.includes(anchor), false);
+  assert.equal(shas.includes(p1) || shas.includes(p2), false);
+});
+
+test('F1+F2 compat: legacy activation + merged pre-existing branch records nothing (cannot prove the boundary)', () => {
+  const w = world({
+    activate: false,
+    before: ({ dev }) => {
+      git(dev, 'checkout', '-q', '-b', 'feat/legacy-merged');
+      commitOn(dev, 'Pre-activation work');
+      git(dev, 'push', '-q', 'origin', 'feat/legacy-merged');
+    },
+  });
+  const anchor = head(w.dev);
+  commitStateFiles({
+    repoRoot: w.dev, homeDir: w.home,
+    files: { [ACTIVATION_PATH]: `${JSON.stringify({ schemaVersion: 1, activatedAt: '2026-10-01T00:00:00.000Z', branches: ['feat/legacy-merged', 'main'] }, null, 2)}\n` },
+    expectedFiles: { [ACTIVATION_PATH]: null },
+    message: 'DocFlow: activate commit-native progress (legacy)',
+    allowCreate: true,
+  });
+  const fresh = commitOn(w.dev, 'Post-activation work');
+  git(w.dev, 'push', '-q', 'origin', 'feat/legacy-merged');
+  git(w.dev, 'checkout', '-q', 'main');
+  git(w.dev, 'merge', '-q', '--no-ff', '-m', 'Merge feat/legacy-merged', 'feat/legacy-merged');
+  git(w.dev, 'push', '-q', 'origin', 'main');
+  const res = w.ingest({ ref: 'refs/heads/feat/legacy-merged', before: anchor, after: fresh });
+  assert.deepEqual(res.recorded, []);
+  assert.equal(res.recovery?.anchored, false);
+  assert.equal(w.fresh().tasks.some((t) => t.id === 'feat/legacy-merged'), false);
+});
+
 // ---- Finding 3: reopened pull requests ----
 
 const T = (hour) => `2026-10-02T${String(hour).padStart(2, '0')}:00:00Z`;
@@ -249,4 +303,27 @@ test('F3: a stale closed event delivered after a newer reopen does not re-abando
   w.pr(payload({ action: 'reopened', branch: 'feat/close-after-reopen', sha: c1, updatedAt: T(6) }));
   w.pr(payload({ action: 'closed', branch: 'feat/close-after-reopen', sha: c1, state: 'closed', closedAt: T(2), updatedAt: T(2) }));
   assert.equal(unitOf(w, 'feat/close-after-reopen').status, 'In progress');
+});
+
+test('F3: a genuine reopened event delivered AFTER a newer synchronize still reopens the unit', () => {
+  const { w, c1 } = prWorld('feat/reorder-reopen');
+  w.pr(payload({ action: 'closed', branch: 'feat/reorder-reopen', sha: c1, state: 'closed', closedAt: T(2), updatedAt: T(2) }));
+  // Real order of events: closed(T2) -> reopened(T3) -> synchronize(T4); delivered: closed, synchronize, reopened.
+  w.pr(payload({ action: 'synchronize', branch: 'feat/reorder-reopen', sha: c1, updatedAt: T(4) }));
+  w.pr(payload({ action: 'reopened', branch: 'feat/reorder-reopen', sha: c1, updatedAt: T(3) }));
+  const unit = unitOf(w, 'feat/reorder-reopen');
+  assert.equal(unit.status, 'In progress');
+  assert.equal(unit.completed, null);
+  assert.equal(unit.pr.updatedAt, T(4), 'recorded PR time never moves backwards');
+});
+
+test('F3: a later close is still applied after the reorder (closed T5 after synchronize T4)', () => {
+  const { w, c1 } = prWorld('feat/reorder-then-close');
+  w.pr(payload({ action: 'closed', branch: 'feat/reorder-then-close', sha: c1, state: 'closed', closedAt: T(2), updatedAt: T(2) }));
+  w.pr(payload({ action: 'synchronize', branch: 'feat/reorder-then-close', sha: c1, updatedAt: T(4) }));
+  w.pr(payload({ action: 'reopened', branch: 'feat/reorder-then-close', sha: c1, updatedAt: T(3) }));
+  w.pr(payload({ action: 'closed', branch: 'feat/reorder-then-close', sha: c1, state: 'closed', closedAt: T(5), updatedAt: T(5) }));
+  const unit = unitOf(w, 'feat/reorder-then-close');
+  assert.equal(unit.status, 'Abandoned');
+  assert.equal(unit.completed, T(5));
 });
