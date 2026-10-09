@@ -176,6 +176,23 @@ test('F2: an anchor that is no longer an ancestor (rewritten history) is reporte
   assert.deepEqual(res.recorded, [rewritten]);
 });
 
+test('F1 control: a new branch cut from an already-merged branch tip (no commits of its own) creates no unit', () => {
+  const w = world();
+  git(w.dev, 'checkout', '-q', '-b', 'feat/a');
+  const a1 = commitOn(w.dev, 'Feature A work');
+  git(w.dev, 'push', '-q', 'origin', 'feat/a');
+  git(w.dev, 'checkout', '-q', 'main');
+  git(w.dev, 'merge', '-q', '--no-ff', '-m', 'Merge pull request #1 from o/feat/a', 'feat/a');
+  git(w.dev, 'push', '-q', 'origin', 'main');
+  // A different branch pointing at A's merged tip, with nothing of its own.
+  git(w.dev, 'push', '-q', 'origin', `${a1}:refs/heads/feat/cut-from-merged`);
+  const res = w.ingest({ ref: 'refs/heads/feat/cut-from-merged', before: ZERO, after: a1 });
+  assert.deepEqual(res.recorded, []);
+  assert.equal(w.fresh().tasks.some((t) => t.id === 'feat/cut-from-merged'), false);
+  // ... while A's own delayed first delivery is still recovered.
+  assert.deepEqual(w.ingest({ ref: 'refs/heads/feat/a', before: ZERO, after: a1 }).recorded, [a1]);
+});
+
 test('F1+F2: a merged PRE-EXISTING branch records only post-activation commits, never its pre-activation history', () => {
   const w = world({
     activate: false,
@@ -275,6 +292,8 @@ test('F3: a stale reopened event (older than the recorded closure) does not reop
   const unit = unitOf(w, 'feat/stale-reopen');
   assert.equal(unit.status, 'Abandoned');
   assert.equal(unit.outcome, 'Closed without merge');
+  assert.equal(unit.pr.state, 'closed', 'a stale event must not rewrite the recorded PR state');
+  assert.equal(unit.pr.updatedAt, T(5));
 });
 
 test('F3: late opened / synchronize events never reopen an abandoned unit', () => {

@@ -1171,12 +1171,19 @@ export function recordPullRequestEvent({
     // newest one already applied is stale and must not change the lifecycle (a merged event
     // is terminal and always applies).
     const lastAppliedAt = task.pr?.updatedAt ?? null;
-    // A 'reopened' event is judged against the recorded CLOSURE time instead (below): events are
-    // delivered out of order, so a genuine reopen may legitimately trail a newer synchronize.
-    const stale = !validPr.merged && action !== 'reopened'
+    // A genuine reopen is judged against the recorded CLOSURE time, not delivery order: events
+    // arrive out of order, so it may legitimately trail a newer synchronize. Without a provable
+    // timestamp we cannot rule out a delayed delivery, so it is not applied.
+    const canRestore = action === 'reopened' && validPr.state === 'open' && !merged
+      && task.status === 'Abandoned' && Boolean(validPr.updatedAt)
+      && (!task.completed || validPr.updatedAt >= task.completed);
+    const unrestorableReopen = action === 'reopened' && task.status === 'Abandoned' && !canRestore;
+    // Any other event older than the newest one already applied is stale (a merged event is
+    // terminal and always applies). Stale events never rewrite the recorded PR state.
+    const stale = !validPr.merged && !canRestore
       && Boolean(validPr.updatedAt && lastAppliedAt && validPr.updatedAt < lastAppliedAt);
-    if (stale && !created) {
-      return { repoRoot, task, created: false, ignored: true, reason: 'Stale pull request event ignored (older than the last applied event)' };
+    if ((stale || unrestorableReopen) && !created) {
+      return { repoRoot, task, created: false, ignored: true, reason: 'Stale pull request event ignored (older than the last applied event or closure)' };
     }
 
     task.pr = {
@@ -1198,15 +1205,10 @@ export function recordPullRequestEvent({
         // A newer close (after a reopen) must record its own time; the same close replayed keeps it.
         task.completed = validPr.closedAt || task.completed || isoNow(now);
       }
-    } else if (action === 'reopened' && validPr.state === 'open' && task.status === 'Abandoned') {
-      // Restore only on a genuine, provably newer reopen. Without the event timestamp we cannot
-      // rule out a delayed delivery, so we stay abandoned (GitHub always supplies updated_at).
-      const closedAt = task.completed;
-      if (validPr.updatedAt && (!closedAt || validPr.updatedAt >= closedAt)) {
-        task.status = 'In progress';
-        task.outcome = null;
-        task.completed = null;
-      }
+    } else if (canRestore) {
+      task.status = 'In progress';
+      task.outcome = null;
+      task.completed = null;
     }
 
     writeTaskUnit(repoRoot, task, {

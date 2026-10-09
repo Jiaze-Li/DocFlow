@@ -126,7 +126,16 @@ function preActivationTips(repoRoot, branch, activation, exec) {
 // the tip on a non-first parent. The branch's own commits are then exactly `tip --not M^1`,
 // so no base history can enter. Anything else (a branch cut from base, a fast-forward or a
 // base commit with no merge evidence) yields nothing, exactly as before.
-function mergedBranchCommits(repoRoot, after, baseShas, exec, { boundary = null } = {}) {
+// The merge commit must name THIS branch (GitHub: "Merge pull request #N from owner/<branch>",
+// git: "Merge branch '<branch>'"). Without that, a different branch that merely points at an
+// already-merged tip would be handed another branch's commits.
+function mergeNamesBranch(repoRoot, merge, branch, exec) {
+  const subject = git(repoRoot, ['log', '-1', '--format=%s', merge], exec, { allowFailure: true }).trim();
+  const escaped = branch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[\\s'"/])${escaped}($|[\\s'",])`).test(subject);
+}
+
+function mergedBranchCommits(repoRoot, after, baseShas, exec, { boundary = null, branch = null } = {}) {
   for (const base of baseShas) {
     if (!isAncestor(repoRoot, after, base, exec)) continue;
     const chain = git(repoRoot, ['rev-list', '--first-parent', '--ancestry-path', `${after}..${base}`], exec, { allowFailure: true })
@@ -137,6 +146,7 @@ function mergedBranchCommits(repoRoot, after, baseShas, exec, { boundary = null 
     if (parents.length < 2) continue;
     const viaSecondParent = parents.slice(1).some((p) => isAncestor(repoRoot, after, p, exec));
     if (!viaSecondParent) continue;
+    if (branch && !mergeNamesBranch(repoRoot, merge, branch, exec)) continue;
     const walked = git(repoRoot, ['rev-list', '--topo-order', '--reverse', after, '--not', parents[0], ...(boundary ? [boundary] : [])], exec)
       .split('\n').map((l) => l.trim()).filter(Boolean);
     if (!walked.length || walked.length > MAX_MERGED_WALK) continue;
@@ -183,7 +193,7 @@ export function selectNewCommits(repoRoot, {
     const anchor = activation.tips?.[branch] ?? null;
     const anchorUsable = Boolean(anchor) && commitExists(repoRoot, anchor, exec) && isAncestor(repoRoot, anchor, after, exec);
     if (!preExistingBranch || anchorUsable) {
-      const owned = mergedBranchCommits(repoRoot, after, baseTips, exec, { boundary: preExistingBranch ? anchor : null });
+      const owned = mergedBranchCommits(repoRoot, after, baseTips, exec, { boundary: preExistingBranch ? anchor : null, branch });
       if (owned.length) return { mode: 'create-merged', shas: owned, owned, ...(preExistingBranch ? { recovery: { anchored: true } } : {}) };
     }
   }
