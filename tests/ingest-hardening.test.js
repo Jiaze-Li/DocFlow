@@ -369,3 +369,94 @@ test('F2: exclusions for other pre-existing branches use their immutable activat
   assert.deepEqual(res.recorded, [x]);
   assert.deepEqual(w.fresh().tasks.find((t) => t.id === 'feat/a').commits.map((c) => c.sha), [x]);
 });
+
+// ---- Codex P1 (fd37b9b): merged reconciliation of an EXISTING unit must not record base commits ----
+
+function mergedUnitWorld() {
+  const w = world();
+  git(w.dev, 'checkout', '-q', '-b', 'feat/x');
+  const a = commitOn(w.dev, 'Feature A work');
+  git(w.dev, 'push', '-q', 'origin', 'feat/x');
+  w.ingest({ ref: 'refs/heads/feat/x', before: ZERO, after: a });
+  git(w.dev, 'checkout', '-q', 'main');
+  const x = commitOn(w.dev, 'Mainline X before the merge');
+  git(w.dev, 'merge', '-q', '--no-ff', '-m', 'Merge pull request #1 from o/feat/x', 'feat/x');
+  const m = head(w.dev);
+  const y = commitOn(w.dev, 'Mainline Y after the merge');
+  git(w.dev, 'push', '-q', 'origin', 'main');
+  return { w, a, x, m, y };
+}
+const recordedShas = (w, id) => w.fresh().tasks.find((t) => t.id === id).commits.map((c) => c.sha);
+
+test('P1: a merged feature advanced to the CURRENT base tip does not record base commits', () => {
+  const { w, a, x, m, y } = mergedUnitWorld();
+  git(w.dev, 'checkout', '-q', 'feat/x');
+  git(w.dev, 'merge', '-q', '--ff-only', 'main'); // feature fast-forwards to Y
+  git(w.dev, 'push', '-q', 'origin', 'feat/x');
+  const res = w.ingest({ ref: 'refs/heads/feat/x', before: a, after: y });
+  assert.deepEqual(res.recorded, []);
+  assert.deepEqual(recordedShas(w, 'feat/x'), [a]);
+  for (const sha of [x, m, y]) assert.equal(recordedShas(w, 'feat/x').includes(sha), false);
+});
+
+test('P1: a merged feature moved to an EARLIER base commit does not record base commits', () => {
+  const { w, a, x } = mergedUnitWorld();
+  git(w.dev, 'push', '-q', '--force', 'origin', `${x}:refs/heads/feat/x`);
+  const res = w.ingest({ ref: 'refs/heads/feat/x', before: a, after: x });
+  assert.deepEqual(res.recorded, []);
+  assert.deepEqual(recordedShas(w, 'feat/x'), [a]);
+});
+
+test('P1: with no ownership evidence (rewritten branch, fast-forward merge) the tip fallback records nothing from base', () => {
+  const w = world();
+  git(w.dev, 'checkout', '-q', '-b', 'feat/rw');
+  const c1 = commitOn(w.dev, 'Recorded before the rewrite');
+  git(w.dev, 'push', '-q', 'origin', 'feat/rw');
+  w.ingest({ ref: 'refs/heads/feat/rw', before: ZERO, after: c1 });
+  git(w.dev, 'checkout', '-q', 'main');
+  commitOn(w.dev, 'Mainline work');
+  git(w.dev, 'checkout', '-q', '-B', 'feat/rw', 'main');
+  const d1 = commitOn(w.dev, 'Rewritten one');
+  const d2 = commitOn(w.dev, 'Rewritten two');
+  git(w.dev, 'checkout', '-q', 'main');
+  git(w.dev, 'merge', '-q', '--ff-only', 'feat/rw');
+  git(w.dev, 'push', '-q', 'origin', 'main');
+  git(w.dev, 'push', '-q', '--force', 'origin', 'feat/rw');
+  const res = w.ingest({ ref: 'refs/heads/feat/rw', before: c1, after: d2 });
+  assert.deepEqual(res.recorded, []);
+  assert.match(res.note ?? '', /ownership/i);
+  assert.deepEqual(recordedShas(w, 'feat/rw'), [c1]);
+  assert.equal(recordedShas(w, 'feat/rw').includes(d1), false);
+});
+
+test('P1 controls: genuinely delayed development commits are still recovered (merge commit and fast-forward), replay is idempotent', () => {
+  // non-fast-forward merge, multi-commit compensation
+  const w = world();
+  git(w.dev, 'checkout', '-q', '-b', 'feat/delayed');
+  const a1 = commitOn(w.dev, 'Delayed one');
+  git(w.dev, 'push', '-q', 'origin', 'feat/delayed');
+  w.ingest({ ref: 'refs/heads/feat/delayed', before: ZERO, after: a1 });
+  const a2 = commitOn(w.dev, 'Delayed two');
+  const a3 = commitOn(w.dev, 'Delayed three');
+  git(w.dev, 'push', '-q', 'origin', 'feat/delayed');
+  git(w.dev, 'checkout', '-q', 'main');
+  commitOn(w.dev, 'Mainline during the merge');
+  git(w.dev, 'merge', '-q', '--no-ff', '-m', "Merge branch 'feat/delayed'", 'feat/delayed');
+  git(w.dev, 'push', '-q', 'origin', 'main');
+  const res = w.ingest({ ref: 'refs/heads/feat/delayed', before: a1, after: a3 });
+  assert.deepEqual(res.recorded, [a2, a3]);
+  assert.deepEqual(w.ingest({ ref: 'refs/heads/feat/delayed', before: a1, after: a3 }).recorded, []);
+  assert.deepEqual(recordedShas(w, 'feat/delayed'), [a1, a2, a3]);
+
+  // fast-forward merge: the unit's recorded commit is on the tip's first-parent chain
+  git(w.dev, 'checkout', '-q', '-b', 'feat/ff-delayed', 'main');
+  const f1 = commitOn(w.dev, 'FF one');
+  git(w.dev, 'push', '-q', 'origin', 'feat/ff-delayed');
+  w.ingest({ ref: 'refs/heads/feat/ff-delayed', before: ZERO, after: f1 });
+  const f2 = commitOn(w.dev, 'FF two');
+  git(w.dev, 'push', '-q', 'origin', 'feat/ff-delayed');
+  git(w.dev, 'checkout', '-q', 'main');
+  git(w.dev, 'merge', '-q', '--ff-only', 'feat/ff-delayed');
+  git(w.dev, 'push', '-q', 'origin', 'main');
+  assert.deepEqual(w.ingest({ ref: 'refs/heads/feat/ff-delayed', before: f1, after: f2 }).recorded, [f2]);
+});

@@ -205,20 +205,27 @@ export function selectNewCommits(repoRoot, {
     const baseShas = resolveBaseBranchShas(repoRoot, exec, defaultBranch);
     const onBase = baseShas.some((base) => isAncestor(repoRoot, after, base, exec));
     if (!onBase) return { mode: 'reconcile', shas: list(recorded) };
-    // The tip already merged into base (a delayed delivery for a known unit). Base cannot be
-    // used as an exclusion now, so walk only the branch's own first-parent chain, bounded by
-    // what is recorded and by the fork point of the unit's first recorded commit.
-    const first = recorded[0];
-    const forkParents = first
-      ? git(repoRoot, ['rev-list', '--parents', '-n', '1', first], exec).trim().split(/\s+/).slice(1)
-      : [];
-    // Fail closed: if no recorded commit is connected to the merged tip, or the walk is
-    // implausibly long, we cannot prove these commits belong to the branch; record only the
-    // tip instead of risking a backfill of base history.
-    const connected = recorded.some((sha) => isAncestor(repoRoot, sha, after, exec));
-    const walked = connected ? revList(['--first-parent', after, '--not', ...recorded, ...forkParents]) : [];
-    if (!connected || walked.length > MAX_MERGED_WALK) return { mode: 'reconcile-merged-tip', shas: [after] };
-    return { mode: 'reconcile-merged', shas: walked };
+    // The tip is already on base (a delayed delivery for a known unit, or a branch that was
+    // reset/advanced onto base). "A recorded SHA is an ancestor of the tip" proves nothing
+    // about WHICH commits belong to the branch, so ownership needs positive evidence:
+    //  1. a merge commit naming this branch whose second parent contains the tip: the branch's
+    //     own commits are exactly `tip --not M^1` (the unit's recorded commits are deduped later);
+    //  2. otherwise the tip's first-parent chain must reach a commit this unit already recorded
+    //     (fast-forward / rebase merges); only the commits above that point are the branch's.
+    // With neither, nothing is recorded: base history is never promoted to branch progress.
+    const unitBranch = unit.branch || branch;
+    const merged = mergedBranchCommits(repoRoot, after, baseShas, exec, { branch: unitBranch });
+    if (merged.length) return { mode: 'reconcile-merged', shas: merged };
+    const recordedSet = new Set(recorded);
+    const chain = git(repoRoot, ['rev-list', '--first-parent', '-n', String(MAX_MERGED_WALK + 1), after], exec)
+      .split('\n').map((l) => l.trim()).filter(Boolean);
+    const stop = chain.findIndex((sha) => recordedSet.has(sha));
+    if (stop >= 0 && stop <= MAX_MERGED_WALK) return { mode: 'reconcile-merged', shas: chain.slice(0, stop).reverse() };
+    return {
+      mode: 'reconcile-merged-tip',
+      shas: [],
+      note: 'No ownership evidence for the pushed tip (it is on the base branch and not provably this branch\'s own work); nothing was recorded.',
+    };
   }
   // A branch that predates activation and has no recorded commits yet: anchor on the tip it
   // had at activation time so a lost first run is recovered, never on pre-activation history.
@@ -305,6 +312,7 @@ export function ingestPush({
     recorded: result.recorded.map((c) => c.sha), alreadyRecorded: result.alreadyRecorded.map((c) => c.sha),
     rejected: result.rejected, warnings, ignored: result.ignored ?? false, reason: result.reason,
     ...(selection.recovery ? { recovery: selection.recovery } : {}),
+    ...(selection.note ? { note: selection.note } : {}),
   };
 }
 
