@@ -250,13 +250,14 @@ test('F1+F2 compat: legacy activation + merged pre-existing branch records nothi
 // ---- Finding 3: reopened pull requests ----
 
 const T = (hour) => `2026-10-02T${String(hour).padStart(2, '0')}:00:00Z`;
-function payload({ action, number = 21, branch, sha, state = 'open', merged = false, updatedAt, closedAt = null }) {
+function payload({ action, number = 21, branch, sha, state = 'open', merged = false, updatedAt, closedAt = null, commits }) {
   return {
     action,
     repository: { default_branch: 'main' },
     pull_request: {
       number, state, merged, title: `PR ${number}`, html_url: `https://example.test/pr/${number}`,
       merged_at: merged ? closedAt : null, closed_at: state === 'closed' ? closedAt : null, updated_at: updatedAt,
+      ...(commits != null ? { commits } : {}),
       head: { ref: branch, sha, repo: { full_name: 'o/r' } }, base: { ref: 'main', repo: { full_name: 'o/r' } },
     },
   };
@@ -448,7 +449,7 @@ test('P1 controls: genuinely delayed development commits are still recovered (me
   assert.deepEqual(w.ingest({ ref: 'refs/heads/feat/delayed', before: a1, after: a3 }).recorded, []);
   assert.deepEqual(recordedShas(w, 'feat/delayed'), [a1, a2, a3]);
 
-  // fast-forward merge: the unit's recorded commit is on the tip's first-parent chain
+  // fast-forward merge: the PR's own size (pull_request.commits) bounds what the branch owns
   git(w.dev, 'checkout', '-q', '-b', 'feat/ff-delayed', 'main');
   const f1 = commitOn(w.dev, 'FF one');
   git(w.dev, 'push', '-q', 'origin', 'feat/ff-delayed');
@@ -458,5 +459,28 @@ test('P1 controls: genuinely delayed development commits are still recovered (me
   git(w.dev, 'checkout', '-q', 'main');
   git(w.dev, 'merge', '-q', '--ff-only', 'feat/ff-delayed');
   git(w.dev, 'push', '-q', 'origin', 'main');
-  assert.deepEqual(w.ingest({ ref: 'refs/heads/feat/ff-delayed', before: f1, after: f2 }).recorded, [f2]);
+  // A plain push has no independent bound: nothing is recorded (cannot be told apart from a ref advanced onto base).
+  assert.deepEqual(w.ingest({ ref: 'refs/heads/feat/ff-delayed', before: f1, after: f2 }).recorded, []);
+  // The PR event for the same head carries the PR size and does recover it.
+  const viaPr = w.pr(payload({ action: 'closed', number: 31, branch: 'feat/ff-delayed', sha: f2, state: 'closed', merged: true, closedAt: T(3), updatedAt: T(3), commits: 2 }));
+  assert.deepEqual(viaPr.recorded, [f2]);
+});
+
+test('P1: after a fast-forward merge and later base commits, advancing the feature ref to the base tip records nothing (push or PR event)', () => {
+  const w = world();
+  git(w.dev, 'checkout', '-q', '-b', 'feat/ffz');
+  const f1 = commitOn(w.dev, 'FF feature work');
+  git(w.dev, 'push', '-q', 'origin', 'feat/ffz');
+  w.ingest({ ref: 'refs/heads/feat/ffz', before: ZERO, after: f1 });
+  git(w.dev, 'checkout', '-q', 'main');
+  git(w.dev, 'merge', '-q', '--ff-only', 'feat/ffz');
+  const base1 = commitOn(w.dev, 'Unrelated mainline one');
+  const base2 = commitOn(w.dev, 'Unrelated mainline two');
+  git(w.dev, 'push', '-q', 'origin', 'main');
+  git(w.dev, 'push', '-q', '--force', 'origin', `${base2}:refs/heads/feat/ffz`);
+  assert.deepEqual(w.ingest({ ref: 'refs/heads/feat/ffz', before: f1, after: base2 }).recorded, []);
+  const viaPr = w.pr(payload({ action: 'synchronize', number: 32, branch: 'feat/ffz', sha: base2, updatedAt: T(4), commits: 1 }));
+  assert.deepEqual(viaPr.recorded, []);
+  assert.deepEqual(recordedShas(w, 'feat/ffz'), [f1]);
+  for (const sha of [base1, base2]) assert.equal(recordedShas(w, 'feat/ffz').includes(sha), false);
 });

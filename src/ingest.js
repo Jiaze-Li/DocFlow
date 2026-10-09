@@ -169,6 +169,10 @@ function mergedBranchCommits(repoRoot, after, baseShas, exec, { boundary = null,
  */
 export function selectNewCommits(repoRoot, {
   branch, before = null, after, defaultBranch = null, exec = execFileSync,
+  // GitHub-reported size of the pull request this event belongs to (`pull_request.commits`).
+  // It is the only independent bound on how many commits can be the branch's own when the tip
+  // is already on base without merge-commit evidence.
+  prCommitCount = null,
 }) {
   const unit = getBranchUnit(repoRoot, branch, exec);
   const recorded = (unit?.commits || []).map((c) => c.sha).filter((sha) => commitExists(repoRoot, sha, exec));
@@ -210,8 +214,10 @@ export function selectNewCommits(repoRoot, {
     // about WHICH commits belong to the branch, so ownership needs positive evidence:
     //  1. a merge commit naming this branch whose second parent contains the tip: the branch's
     //     own commits are exactly `tip --not M^1` (the unit's recorded commits are deduped later);
-    //  2. otherwise the tip's first-parent chain must reach a commit this unit already recorded
-    //     (fast-forward / rebase merges); only the commits above that point are the branch's.
+    //  2. otherwise (fast-forward merge) the tip's first-parent chain must reach a commit this
+    //     unit already recorded AND the commits above it must fit inside the pull request's
+    //     own size (recorded + new <= pull_request.commits). A plain push has no such bound,
+    //     so a feature ref advanced onto a base tip can never be told apart from real work.
     // With neither, nothing is recorded: base history is never promoted to branch progress.
     const unitBranch = unit.branch || branch;
     const merged = mergedBranchCommits(repoRoot, after, baseShas, exec, { branch: unitBranch });
@@ -220,7 +226,9 @@ export function selectNewCommits(repoRoot, {
     const chain = git(repoRoot, ['rev-list', '--first-parent', '-n', String(MAX_MERGED_WALK + 1), after], exec)
       .split('\n').map((l) => l.trim()).filter(Boolean);
     const stop = chain.findIndex((sha) => recordedSet.has(sha));
-    if (stop >= 0 && stop <= MAX_MERGED_WALK) return { mode: 'reconcile-merged', shas: chain.slice(0, stop).reverse() };
+    if (stop >= 0 && Number.isInteger(prCommitCount) && stop + recorded.length <= prCommitCount) {
+      return { mode: 'reconcile-merged', shas: chain.slice(0, stop).reverse() };
+    }
     return {
       mode: 'reconcile-merged-tip',
       shas: [],
@@ -285,7 +293,7 @@ function withRetry(fn, { attempts = 8, delayMs = 300 } = {}) {
 /** Ingest a branch push. `before`/`after` come from the GitHub push event. */
 export function ingestPush({
   cwd = process.cwd(), ref, before = null, after, deleted = false, defaultBranch = null,
-  now = new Date(), exec = execFileSync, homeDir = os.homedir(),
+  now = new Date(), exec = execFileSync, homeDir = os.homedir(), prCommitCount = null,
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) return { repoRoot, skipped: true, reason: 'DocFlow is not enabled in this repository' };
@@ -295,7 +303,7 @@ export function ingestPush({
   if (!isDevelopmentBranch(branch, { repoRoot, exec, defaultBranch })) return { repoRoot, skipped: true, reason: `Branch '${branch}' is not a development branch` };
   if (!commitExists(repoRoot, after, exec)) throw new Error(`Pushed commit ${after} is not available locally; check out with full history (fetch-depth: 0)`);
 
-  const selection = selectNewCommits(repoRoot, { branch, before, after, defaultBranch, exec });
+  const selection = selectNewCommits(repoRoot, { branch, before, after, defaultBranch, exec, prCommitCount });
   const facts = loadCommitFacts(repoRoot, selection.shas, exec);
   const warnings = [];
   for (const fact of facts) {
@@ -338,6 +346,7 @@ export function ingestPullRequest({
     push = ingestPush({
       cwd: repoRoot, ref: `refs/heads/${branch}`, before: payload.before ?? null, after: pr.head.sha,
       defaultBranch: base, now, exec, homeDir,
+      prCommitCount: Number.isInteger(pr.commits) ? pr.commits : null,
     });
   }
   const merged = Boolean(pr.merged);

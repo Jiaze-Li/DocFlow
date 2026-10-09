@@ -330,7 +330,7 @@ test('out-of-order events: merged PR arrives first, delayed push and opened even
   git(w.dev, 'push', '-q', 'origin', 'main');
 
   const r = w.runner();
-  ingestPullRequest({ cwd: r.root, homeDir: r.home, payload: prPayload({ number: 9, branch: 'feat/order', sha: c2, state: 'closed', merged: true }) });
+  ingestPullRequest({ cwd: r.root, homeDir: r.home, payload: prPayload({ number: 9, branch: 'feat/order', sha: c2, state: 'closed', merged: true, extra: { commits: 2 } }) });
   // Delayed events: the push for c2 and a stale "opened" for the same PR.
   w.ingest({ ref: 'refs/heads/feat/order', before: c1, after: c2 });
   const r2 = w.runner();
@@ -469,7 +469,7 @@ test('same-branch race: a push run and a merged-PR run executing at the same tim
     const pushEvent = path.join(pushRunner.home, 'push.json');
     const prEvent = path.join(prRunner.home, 'pr.json');
     fs.writeFileSync(pushEvent, JSON.stringify({ ref: 'refs/heads/feat/samerace', before: c1, after: c2, repository: { default_branch: 'main' } }));
-    fs.writeFileSync(prEvent, JSON.stringify(prPayload({ number: 11, branch: 'feat/samerace', sha: c2, state: 'closed', merged: true })));
+    fs.writeFileSync(prEvent, JSON.stringify(prPayload({ number: 11, branch: 'feat/samerace', sha: c2, state: 'closed', merged: true, extra: { commits: 2 } })));
     const run = (runner, name, file) => new Promise((resolve) => {
       const child = spawn(process.execPath, [CLI, 'ingest-github', '--event-name', name, '--event-path', file, '--cwd', runner.root], {
         env: { ...process.env, HOME: runner.home }, stdio: ['ignore', 'pipe', 'pipe'],
