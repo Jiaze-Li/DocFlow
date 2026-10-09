@@ -206,3 +206,19 @@ test('sync agent: written but never loaded, status tracks drift, doctor reports 
   assert.equal(uninstallSyncAgent({ homeDir: home }).removed, true);
   assert.equal(syncAgentStatus({ homeDir: home }).state, 'missing');
 });
+
+test('commit subjects containing DocFlow markers cannot corrupt the managed block (sync keeps working)', () => {
+  const w = world();
+  w.push('feat/markers', ['Docs mention <!-- DOCFLOW:END --> and <!-- DOCFLOW:UNIT:x:START --> literally', 'Plain follow-up change']);
+  const c = consumer(w.remote);
+  cli(['sync', '--refresh', '--cwd', c.repo], c.home);
+  cli(['sync', '--cwd', c.repo], c.home);
+  const note = fs.readFileSync(c.notePath, 'utf8');
+  assert.equal(note.split(MANAGED_BEGIN).length - 1, 1);
+  assert.equal(note.split(MANAGED_END).length - 1, 1);
+  assert.equal(note.split('<!-- DOCFLOW:UNIT:x:START -->').length - 1, 0);
+  assert.match(note, /Docs mention/);
+  w.push('feat/markers', ['One more change after the odd subject']);
+  cli(['sync', '--refresh', '--cwd', c.repo], c.home);
+  assert.match(fs.readFileSync(c.notePath, 'utf8'), /One more change after the odd subject/);
+});

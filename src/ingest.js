@@ -114,6 +114,10 @@ function preActivationTips(repoRoot, branch, activation, exec) {
   const tips = new Set();
   for (const name of activation.branches) {
     if (name === branch || name === STATE_BRANCH) continue;
+    // The immutable activation-time tip is the pre-activation boundary. A branch's CURRENT
+    // tip moves (it may even have absorbed this branch's new commits) and would erase them.
+    const pinned = activation.tips?.[name];
+    if (pinned && commitExists(repoRoot, pinned, exec)) { tips.add(pinned); continue; }
     const sha = git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}^{commit}`], exec, { allowFailure: true }).trim();
     if (sha) tips.add(sha);
   }

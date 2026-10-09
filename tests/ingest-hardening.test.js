@@ -346,3 +346,26 @@ test('F3: a later close is still applied after the reorder (closed T5 after sync
   assert.equal(unit.status, 'Abandoned');
   assert.equal(unit.completed, T(5));
 });
+
+test('F2: exclusions for other pre-existing branches use their immutable activation tips, not their moving current tips', () => {
+  const w = world({
+    activate: false,
+    before: ({ dev }) => {
+      git(dev, 'checkout', '-q', '-b', 'feat/b');
+      commitOn(dev, 'Branch b base');
+      git(dev, 'push', '-q', 'origin', 'feat/b');
+      git(dev, 'checkout', '-q', '-b', 'feat/a');
+      commitOn(dev, 'Branch a base');
+      git(dev, 'push', '-q', 'origin', 'feat/a');
+    },
+  });
+  const anchorA = head(w.dev);
+  setupRepo({ cwd: w.dev, homeDir: w.home });
+  const x = commitOn(w.dev, 'Post-activation commit X on a');
+  git(w.dev, 'push', '-q', 'origin', 'feat/a');
+  // feat/b advances to X before feat/a's delayed event is processed.
+  git(w.dev, 'push', '-q', 'origin', `${x}:refs/heads/feat/b`);
+  const res = w.ingest({ ref: 'refs/heads/feat/a', before: anchorA, after: x });
+  assert.deepEqual(res.recorded, [x]);
+  assert.deepEqual(w.fresh().tasks.find((t) => t.id === 'feat/a').commits.map((c) => c.sha), [x]);
+});

@@ -11,8 +11,14 @@ function day(value) {
   return match ? match[1] : String(value ?? '').trim();
 }
 
+// Commit subjects are arbitrary text. Neutralize HTML comment openers so a subject can never
+// forge or close a DocFlow managed-block marker (which would wedge every later sync).
+function safeText(text) {
+  return String(text).replaceAll('<!--', '&lt;!--').replaceAll('-->', '--&gt;');
+}
+
 function entry(commit) {
-  return `${commit.message} (\`${shortSha(commit.sha)}\`${commit.timestamp ? `, ${day(commit.timestamp)}` : ''})`;
+  return `${safeText(commit.message)} (\`${shortSha(commit.sha)}\`${commit.timestamp ? `, ${day(commit.timestamp)}` : ''})`;
 }
 
 /**
@@ -26,7 +32,7 @@ export function commitUnitSections(task) {
   const commits = task.commits || [];
   const newest = commits.at(-1);
   const commitSubjects = new Set(commits.map((c) => c.message));
-  const legacy = (task.history || []).filter((h) => !commitSubjects.has(h.text)).map((h) => h.text);
+  const legacy = (task.history || []).filter((h) => !commitSubjects.has(h.text)).map((h) => safeText(h.text));
   return {
     current: entry(newest),
     next: task.next || '-',
