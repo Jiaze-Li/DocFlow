@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MANAGED_BEGIN, MANAGED_END, configureGlobal, initRepo, startTask, syncObsidian } from '../src/core.js';
+import { MANAGED_BEGIN, MANAGED_END, configureGlobal, initRepo, renderTaskUnit, startTask, syncObsidian } from '../src/core.js';
 import { AGENT_LABEL, catchUpAll, installSyncAgent, listRegisteredRepos, registerRepo, syncAgentStatus, uninstallSyncAgent } from '../src/catchup.js';
 import { ingestPush } from '../src/ingest.js';
 import { setupRepo } from '../src/setup-repo.js';
@@ -66,12 +66,46 @@ test('every distinct SHA is projected in order; identical subjects stay distinct
   const block = note.slice(note.indexOf('<!-- DOCFLOW:UNIT:'));
   const adds = block.split('\n').filter((l) => l.startsWith('- Add upload retry'));
   assert.equal(adds.length, 1, 'older identical subject is in History once');
-  assert.match(block, /\*\*Current\*\*\nAdd upload retry \(`[0-9a-f]{7}`/);
+  assert.match(block, /### Current\nAdd upload retry \(`[0-9a-f]{7}`/);
   assert.ok(block.includes(`\`${shas[0].slice(0, 7)}\``) && block.includes(`\`${shas[1].slice(0, 7)}\``) && block.includes(`\`${shas[2].slice(0, 7)}\``));
-  const historyOrder = block.split('**History**')[1];
+  const historyOrder = block.split('### History')[1];
   assert.ok(historyOrder.indexOf(shas[0].slice(0, 7)) < historyOrder.indexOf(shas[1].slice(0, 7)));
   assert.doesNotMatch(note, /Long body that must never reach Obsidian/);
-  assert.match(block, /\*\*Next\*\*\n-\n/);
+  assert.doesNotMatch(block, /### Next/);
+  assert.match(block, /\*\*PR:\*\*\n/);
+  assert.doesNotMatch(block, /\*\*Task:\*\*/);
+});
+
+test('branch presentation: empty PR line, Current then Next then History, PR merge status', () => {
+  const base = {
+    id: 'feat/presentation', branch: 'feat/presentation', title: 'feat/presentation',
+    task: 'Development branch: feat/presentation', started: '2026-10-09T10:00:00Z',
+    status: 'In progress', current: 'Implement branch view', next: 'Verify Obsidian rendering',
+    history: [], pr: null, completed: null, outcome: null,
+    commits: [
+      { sha: 'a'.repeat(40), branch: 'feat/presentation', timestamp: '2026-10-09T10:00:00Z', message: 'Add branch view' },
+      { sha: 'b'.repeat(40), branch: 'feat/presentation', timestamp: '2026-10-09T11:00:00Z', message: 'Implement branch view' },
+    ],
+  };
+  const beforePr = renderTaskUnit(base);
+  assert.match(beforePr, /## Branch: feat\/presentation/);
+  assert.match(beforePr, /\*\*PR:\*\*\n/);
+  assert.doesNotMatch(beforePr, /\*\*Task:\*\*/);
+  assert.doesNotMatch(beforePr, /Development branch:/);
+  assert.ok(beforePr.indexOf('### Current') < beforePr.indexOf('### Next'));
+  assert.ok(beforePr.indexOf('### Next') < beforePr.indexOf('### History'));
+  assert.match(beforePr, /- Add branch view \(`aaaaaaa`, 2026-10-09\)/);
+  const afterMerge = renderTaskUnit({
+    ...base, status: 'Completed', outcome: 'Merged', completed: '2026-10-10T09:00:00Z',
+    next: '', pr: { number: 14, state: 'closed', merged: true, url: 'https://github.com/Jiaze-Li/reviewloop/pull/14' },
+  });
+  assert.match(afterMerge, /\*\*Status:\*\* Completed · Merged/);
+  assert.match(afterMerge, /\*\*PR:\*\* \[#14\]\(https:\/\/github\.com\/Jiaze-Li\/reviewloop\/pull\/14\)/);
+  assert.match(afterMerge, /\*\*Completed:\*\* 2026-10-10/);
+  assert.doesNotMatch(afterMerge, /### Next/);
+  const firstOnly = renderTaskUnit({ ...base, next: '', commits: base.commits.slice(0, 1) });
+  assert.doesNotMatch(firstOnly, /### History/);
+  assert.doesNotMatch(firstOnly, /### Next/);
 });
 
 test('repeated sync is byte-idempotent and manual content outside the managed block is preserved', () => {
@@ -134,8 +168,8 @@ test('independent units never overwrite each other', () => {
   const c = consumer(w.remote);
   cli(['sync', '--refresh', '--cwd', c.repo], c.home);
   const note = fs.readFileSync(c.notePath, 'utf8');
-  assert.match(note, /## feat\/one/);
-  assert.match(note, /## feat\/two/);
+  assert.match(note, /## Branch: feat\/one/);
+  assert.match(note, /## Branch: feat\/two/);
   assert.match(note, /Unit one second/);
   assert.match(note, /Unit two first/);
   w.push('feat/two', ['Unit two next']);

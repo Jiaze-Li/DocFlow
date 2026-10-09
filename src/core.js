@@ -1302,6 +1302,42 @@ function displayDate(value) {
 export function renderTaskUnit(task) {
   const normalized = validateTask(JSON.parse(JSON.stringify(task)));
   const markers = unitMarkers(normalized.id);
+  // Commit-native units use a compact branch-first presentation. Keep their durable
+  // IDs and DOCFLOW:UNIT markers unchanged so old projected notes update in place.
+  // Legacy v1 units retain the original presentation verbatim below.
+  if (normalized.branch) {
+    const view = normalized.commits?.length
+      ? commitUnitSections(normalized)
+      : {
+        current: normalized.current || '-',
+        next: normalized.next || '',
+        history: normalized.history.map((e) => e.text),
+      };
+    const pr = normalized.pr;
+    const prUrl = typeof pr?.url === 'string'
+      && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(pr.url)
+      ? pr.url : null;
+    const prLabel = pr ? (prUrl ? `[#${pr.number}](${prUrl})` : `#${pr.number}`) : '';
+    const status = normalized.outcome ? `${normalized.status} · ${normalized.outcome}` : normalized.status;
+    const lines = [
+      markers.begin,
+      `## Branch: ${normalized.branch}`,
+      '',
+      `**Status:** ${status}`,
+      `**PR:**${prLabel ? ` ${prLabel}` : ''}`,
+      `**Started:** ${displayDate(normalized.started)}`,
+    ];
+    if (normalized.completed) lines.push(`**Completed:** ${displayDate(normalized.completed)}`);
+    lines.push('', '### Current', view.current || '-');
+    if (view.next && view.next.trim() && view.next !== '-') lines.push('', '### Next', view.next);
+    if (view.history.length) {
+      lines.push('', '### History');
+      for (const text of view.history) lines.push(`- ${text}`);
+    }
+    lines.push(markers.end);
+    return `${lines.join('\n')}\n`;
+  }
+
   const lines = [markers.begin, `## ${normalized.id} · ${normalized.title}`, ''];
   lines.push(`**Task:** ${normalized.task}`);
   lines.push(`**Started:** ${displayDate(normalized.started)}`);
