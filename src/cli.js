@@ -124,6 +124,9 @@ export async function runCli(argv = process.argv.slice(2), env = process.env) {
         const why = w.problems.map((p) => p.reason).join(' ').replace(/[\r\n%]/g, ' ');
         console.log(`::warning title=DocFlow commit message::${w.sha.slice(0, 7)} ${JSON.stringify(w.subject)}: ${why}`);
       }
+      if (result.recovery && result.recovery.anchored === false) {
+        console.log(`::warning title=DocFlow recovery::${String(result.recovery.note).replace(/[\r\n%]/g, ' ')}`);
+      }
       if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `${formatIngestSummary(result)}\n`);
       print(result, true); return 0;
     }

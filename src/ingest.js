@@ -61,13 +61,27 @@ export function activateCommitNative({
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
   const existing = readActivation(repoRoot, exec);
   if (existing) return { repoRoot, activation: existing, created: false };
-  const names = branches ?? git(repoRoot, ['ls-remote', '--heads', 'origin'], exec, { allowFailure: true })
-    .split('\n').map((line) => line.trim().split(/\s+/)[1]).filter(Boolean)
-    .map((ref) => ref.replace(/^refs\/heads\//, ''));
+  // name -> tip SHA at activation time. The tip is the anchor that lets a later push recover
+  // a first post-activation run that was lost (see selectNewCommits).
+  const tips = {};
+  if (branches) {
+    for (const name of branches) {
+      const sha = git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}^{commit}`], exec, { allowFailure: true }).trim();
+      if (sha) tips[name] = sha;
+    }
+  } else {
+    for (const line of git(repoRoot, ['ls-remote', '--heads', 'origin'], exec, { allowFailure: true }).split('\n')) {
+      const [sha, ref] = line.trim().split(/\s+/);
+      if (sha && /^[0-9a-f]{40,64}$/i.test(sha) && ref?.startsWith('refs/heads/')) tips[ref.slice('refs/heads/'.length)] = sha.toLowerCase();
+    }
+  }
+  const names = branches ?? Object.keys(tips);
+  const kept = [...new Set(names)].filter((n) => n.length <= 200).sort().slice(0, MAX_ACTIVATION_BRANCHES);
   const activation = {
     schemaVersion: 1,
     activatedAt: (now instanceof Date ? now : new Date(now)).toISOString(),
-    branches: [...new Set(names)].filter((n) => n.length <= 200).sort().slice(0, MAX_ACTIVATION_BRANCHES),
+    branches: kept,
+    tips: Object.fromEntries(kept.filter((n) => tips[n]).map((n) => [n, tips[n]])),
   };
   commitStateFiles({
     repoRoot, homeDir, exec,
@@ -84,6 +98,11 @@ export function readActivation(repoRoot, exec = execFileSync) {
   if (text == null) return null;
   const value = JSON.parse(text);
   if (!value || value.schemaVersion !== 1 || !Array.isArray(value.branches)) throw new Error('Invalid DocFlow activation record');
+  // `tips` is additive: records written before it existed simply have none (legacy format).
+  if (value.tips != null && (typeof value.tips !== 'object' || Array.isArray(value.tips)
+    || Object.values(value.tips).some((sha) => !/^[0-9a-f]{40,64}$/i.test(String(sha))))) {
+    throw new Error('Invalid DocFlow activation record');
+  }
   return value;
 }
 
@@ -99,6 +118,31 @@ function preActivationTips(repoRoot, branch, activation, exec) {
     if (sha) tips.add(sha);
   }
   return [...tips];
+}
+
+// A delayed FIRST delivery for a branch that has meanwhile been merged: its tip is now
+// reachable from base, so base exclusion would erase it. Ownership is proven only by merge
+// commit evidence: the earliest first-parent commit M on base that contains the tip must have
+// the tip on a non-first parent. The branch's own commits are then exactly `tip --not M^1`,
+// so no base history can enter. Anything else (a branch cut from base, a fast-forward or a
+// base commit with no merge evidence) yields nothing, exactly as before.
+function mergedBranchCommits(repoRoot, after, baseShas, exec) {
+  for (const base of baseShas) {
+    if (!isAncestor(repoRoot, after, base, exec)) continue;
+    const chain = git(repoRoot, ['rev-list', '--first-parent', '--ancestry-path', `${after}..${base}`], exec, { allowFailure: true })
+      .split('\n').map((l) => l.trim()).filter(Boolean);
+    const merge = chain.at(-1);
+    if (!merge) continue;
+    const parents = git(repoRoot, ['rev-list', '--parents', '-n', '1', merge], exec).trim().split(/\s+/).slice(1);
+    if (parents.length < 2) continue;
+    const viaSecondParent = parents.slice(1).some((p) => isAncestor(repoRoot, after, p, exec));
+    if (!viaSecondParent) continue;
+    const walked = git(repoRoot, ['rev-list', '--topo-order', '--reverse', after, '--not', parents[0]], exec)
+      .split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!walked.length || walked.length > MAX_MERGED_WALK) continue;
+    return walked;
+  }
+  return [];
 }
 
 /**
@@ -130,6 +174,12 @@ export function selectNewCommits(repoRoot, {
   const list = (extra) => revList([after, ...notArgs(extra)]);
 
   const hasBefore = before && !ZERO_SHA.test(before);
+  const baseTips = resolveBaseBranchShas(repoRoot, exec, defaultBranch);
+  const preExistingBranch = activation.branches.includes(branch);
+  if (!unit?.commits?.length && baseTips.some((base) => isAncestor(repoRoot, after, base, exec))) {
+    const owned = mergedBranchCommits(repoRoot, after, baseTips, exec);
+    if (owned.length) return { mode: 'create-merged', shas: owned, owned };
+  }
   if (unit?.commits?.length) {
     const baseShas = resolveBaseBranchShas(repoRoot, exec, defaultBranch);
     const onBase = baseShas.some((base) => isAncestor(repoRoot, after, base, exec));
@@ -149,17 +199,35 @@ export function selectNewCommits(repoRoot, {
     if (!connected || walked.length > MAX_MERGED_WALK) return { mode: 'reconcile-merged-tip', shas: [after] };
     return { mode: 'reconcile-merged', shas: walked };
   }
-  if (!hasBefore) {
-    const preExisting = activation.branches.includes(branch);
-    // Unknown `before` (e.g. a PR event) on a pre-existing branch: only the tip is new.
-    if (before == null && preExisting) return { mode: 'tip', shas: [after] };
-    return { mode: 'create', shas: list([]) };
+  // A branch that predates activation and has no recorded commits yet: anchor on the tip it
+  // had at activation time so a lost first run is recovered, never on pre-activation history.
+  let recovery = null;
+  if (preExistingBranch) {
+    const anchor = activation.tips?.[branch] ?? null;
+    if (anchor && commitExists(repoRoot, anchor, exec) && isAncestor(repoRoot, anchor, after, exec)) {
+      return { mode: 'forward', shas: list([anchor]), recovery: { anchored: true } };
+    }
+    recovery = {
+      anchored: false,
+      legacyActivation: activation.tips == null,
+      note: activation.tips == null
+        ? 'Activation record has no branch tips (legacy format): a lost earlier run on this pre-existing branch cannot be recovered; recorded forward-only.'
+        : (anchor
+          ? 'Activation anchor is not an ancestor of the pushed tip (history was rewritten) or is unavailable: a lost earlier run cannot be recovered; recorded forward-only.'
+          : 'No activation anchor was recorded for this branch: a lost earlier run cannot be recovered; recorded forward-only.'),
+    };
   }
-  if (!activation.branches.includes(branch)) {
+  const withRecovery = (selection) => (recovery ? { ...selection, recovery } : selection);
+  if (!hasBefore) {
+    // Unknown `before` (e.g. a PR event) on a pre-existing branch: only the tip is new.
+    if (before == null && preExistingBranch) return withRecovery({ mode: 'tip', shas: [after] });
+    return withRecovery({ mode: 'create', shas: list([]) });
+  }
+  if (!preExistingBranch) {
     return { mode: 'create-missed', shas: list([]) };
   }
-  if (!commitExists(repoRoot, before, exec)) return { mode: 'tip', shas: [after] };
-  return { mode: 'forward', shas: list([before]) };
+  if (!commitExists(repoRoot, before, exec)) return withRecovery({ mode: 'tip', shas: [after] });
+  return withRecovery({ mode: 'forward', shas: list([before]) });
 }
 
 function loadCommitFacts(repoRoot, shas, exec) {
@@ -207,12 +275,15 @@ export function ingestPush({
     if (!verdict.ok) warnings.push({ sha: fact.sha, subject: verdict.subject, problems: verdict.problems });
   }
   const result = facts.length
-    ? withRetry(() => recordCommitsProgress({ cwd: repoRoot, branch, commits: facts, now, exec, homeDir, defaultBranch }))
+    ? withRetry(() => recordCommitsProgress({
+      cwd: repoRoot, branch, commits: facts, now, exec, homeDir, defaultBranch, branchOwnedShas: selection.owned ?? [],
+    }))
     : { recorded: [], alreadyRecorded: [], rejected: [] };
   return {
     repoRoot, branch, mode: selection.mode, candidates: selection.shas.length,
     recorded: result.recorded.map((c) => c.sha), alreadyRecorded: result.alreadyRecorded.map((c) => c.sha),
     rejected: result.rejected, warnings, ignored: result.ignored ?? false, reason: result.reason,
+    ...(selection.recovery ? { recovery: selection.recovery } : {}),
   };
 }
 
@@ -245,13 +316,15 @@ export function ingestPullRequest({
     cwd: repoRoot, branch,
     pr: {
       number: pr.number, state: pr.state === 'closed' ? 'closed' : 'open', title: pr.title ?? null, url: pr.html_url ?? null,
-      merged, mergedAt: pr.merged_at ?? null, closedAt: pr.closed_at ?? null,
+      merged, mergedAt: pr.merged_at ?? null, closedAt: pr.closed_at ?? null, updatedAt: pr.updated_at ?? null,
     },
+    action: typeof payload?.action === 'string' ? payload.action : null,
     now, exec, homeDir, defaultBranch: base,
   }));
   return {
     repoRoot, branch, prNumber: pr.number, merged,
     recorded: push.recorded ?? [], alreadyRecorded: push.alreadyRecorded ?? [], warnings: push.warnings ?? [],
     unitId: event.task?.id ?? null, ignored: event.ignored ?? false, reason: event.reason,
+    ...(push.recovery ? { recovery: push.recovery } : {}),
   };
 }

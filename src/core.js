@@ -205,6 +205,7 @@ function validatePullRequest(pr) {
   const merged = pr.merged == null ? undefined : Boolean(pr.merged);
   const mergedAt = pr.mergedAt == null ? null : normalizeIsoDate(pr.mergedAt, 'pr.mergedAt');
   const closedAt = pr.closedAt == null ? null : normalizeIsoDate(pr.closedAt, 'pr.closedAt');
+  const updatedAt = pr.updatedAt == null ? null : normalizeIsoDate(pr.updatedAt, 'pr.updatedAt');
   return {
     number,
     state,
@@ -213,6 +214,7 @@ function validatePullRequest(pr) {
     ...(merged !== undefined ? { merged } : {}),
     ...(mergedAt ? { mergedAt } : {}),
     ...(closedAt ? { closedAt } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
   };
 }
 
@@ -988,6 +990,10 @@ export function recordCommitsProgress({
   exec = execFileSync,
   homeDir = os.homedir(),
   defaultBranch = null,
+  // SHAs that ingestion PROVED belong to this branch although base now contains them
+  // (commits introduced by a merge commit's second parent). Only these skip the baseline
+  // filter when a unit is first created; everything else reachable from base stays excluded.
+  branchOwnedShas = [],
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
@@ -1041,7 +1047,10 @@ export function recordCommitsProgress({
       const existing = state.tasks.find((t) => t.branch === branchName || (t.id === branchName && t.branch == null)) || null;
       // Base reachability only guards creation of NEW units from baseline commits; a known
       // unit keeps accepting delayed commits even after the branch was merged.
-      if (!existing) pending = pending.filter((c) => !isCommitReachableFromBase(repoRoot, c.sha, exec, defaultBranch));
+      if (!existing) {
+        const owned = new Set((branchOwnedShas || []).map((sha) => String(sha).toLowerCase()));
+        pending = pending.filter((c) => owned.has(c.sha) || !isCommitReachableFromBase(repoRoot, c.sha, exec, defaultBranch));
+      }
 
       if (!pending.length) {
         return {
@@ -1097,6 +1106,9 @@ export function recordPullRequestEvent({
   exec = execFileSync,
   homeDir = os.homedir(),
   defaultBranch = null,
+  // The GitHub webhook action ('opened' | 'reopened' | 'synchronize' | 'closed'). Only a
+  // genuine 'reopened' event may restore an abandoned unit.
+  action = null,
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
@@ -1155,6 +1167,15 @@ export function recordPullRequestEvent({
     const wasAlreadyMerged = Boolean(task.pr?.merged || task.status === 'Completed');
     const merged = validPr.merged !== undefined ? (validPr.merged || wasAlreadyMerged) : wasAlreadyMerged;
 
+    // Ordering: GitHub stamps every event with the PR's updated_at. An event older than the
+    // newest one already applied is stale and must not change the lifecycle (a merged event
+    // is terminal and always applies).
+    const lastAppliedAt = task.pr?.updatedAt ?? null;
+    const stale = !validPr.merged && Boolean(validPr.updatedAt && lastAppliedAt && validPr.updatedAt < lastAppliedAt);
+    if (stale && !created) {
+      return { repoRoot, task, created: false, ignored: true, reason: 'Stale pull request event ignored (older than the last applied event)' };
+    }
+
     task.pr = {
       ...(task.pr || {}),
       ...validPr,
@@ -1169,7 +1190,17 @@ export function recordPullRequestEvent({
       if (task.status !== 'Completed') {
         task.status = 'Abandoned';
         task.outcome = 'Closed without merge';
-        task.completed ??= validPr.closedAt || isoNow(now);
+        // A newer close (after a reopen) must record its own time; the same close replayed keeps it.
+        task.completed = validPr.closedAt || task.completed || isoNow(now);
+      }
+    } else if (action === 'reopened' && validPr.state === 'open' && task.status === 'Abandoned') {
+      // Restore only on a genuine, provably newer reopen. Without the event timestamp we cannot
+      // rule out a delayed delivery, so we stay abandoned (GitHub always supplies updated_at).
+      const closedAt = task.completed;
+      if (validPr.updatedAt && (!closedAt || validPr.updatedAt >= closedAt)) {
+        task.status = 'In progress';
+        task.outcome = null;
+        task.completed = null;
       }
     }
 

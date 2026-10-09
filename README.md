@@ -136,6 +136,12 @@ A checkpoint first persists its unit on `docflow-state`, then patches only that 
 
 Same-unit writes use an optimistic revision precondition. If another worktree changes that unit after it was read, the stale checkpoint/start is rejected and must reload before retrying; DocFlow never auto-merges competing Current/Next/History facts.
 
+### Recovery boundaries
+
+- **Activation anchors.** `setup-repo` records each pre-existing branch's tip SHA at activation time (`tips` in the activation record). If the first post-activation run for such a branch is lost, the next push or PR event recovers everything after that anchor; pre-activation history is never backfilled. Activation records written before `tips` existed keep the old forward-only behaviour and report `recovery.anchored: false` (also a GitHub warning annotation) because a lost earlier run cannot be reconstructed after the fact. The same is reported when the anchor is no longer an ancestor of the pushed tip (rewritten history).
+- **Delayed first delivery after a merge.** If the first event for a branch is processed after it was merged with a merge commit, the branch's own commits are recovered from the merge's second parent (`tip --not M^1`), never from base history. Fast-forward merges and branches cut from base carry no such evidence and record nothing.
+- **Reopened PRs.** Only a `reopened` event whose `updated_at` is not older than the recorded closure restores an Abandoned unit to In progress (clearing the closure). Merged units are terminal, and stale `opened` / `synchronize` / `closed` events (older than the last applied PR event) are ignored.
+
 ### Commit-derived projection and automatic catch-up
 
 For commit-native units the projection comes from the commit ledger, not from text: **every distinct SHA is one entry** (two commits with the same subject stay two entries), only the first line of each message is shown (with its short SHA and date), the newest commit is **Current**, earlier ones are **History** in push order, and **Next** is `-` unless a person wrote one. Units without commits (v1) render as before. Presentation lives in `src/render.js` and can change without touching capture.
