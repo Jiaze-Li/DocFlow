@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { syncAgentStatus, listRegisteredRepos } from './catchup.js';
 import { gateStatus, loadGlobalConfig, loadRepoConfig, loadState, resolveRepoRoot } from './core.js';
 import { globalStatus } from './install.js';
 import { workflowStatus } from './github.js';
@@ -57,6 +58,16 @@ export function doctor({ cwd = process.cwd(), homeDir = os.homedir() } = {}) {
   }
   const obsidian = loadGlobalConfig(homeDir);
   checks.push({ name: 'obsidian_config', ok: true, info: true, detail: obsidian ? `${obsidian.obsidian.vault}/${obsidian.obsidian.projectFolder}` : 'not configured' });
+  const agent = syncAgentStatus({ homeDir, cliPath: CLI });
+  checks.push({
+    name: 'sync_agent', ok: true, info: agent.state !== 'current',
+    detail: agent.state === 'current'
+      ? `current (${agent.path})`
+      : `${agent.state} (${agent.path}); run \`docflow install-sync-agent\` for automatic Obsidian catch-up (manual \`docflow sync\` always works)`,
+  });
+  let registered = 0;
+  try { registered = listRegisteredRepos(homeDir).length; } catch { /* reported by catch-up */ }
+  checks.push({ name: 'sync_registry', ok: true, info: true, detail: `${registered} repositor${registered === 1 ? 'y' : 'ies'} registered for catch-up` });
   return { ok: checks.every((c) => c.ok), checks };
 }
 

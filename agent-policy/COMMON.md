@@ -13,7 +13,7 @@ If `{{DOCFLOW_CLI}} doctor --cwd <repo>` reports `commit_native: active`, progre
 - Work normally on a development branch (one branch = one DocFlow unit).
 - Write a meaningful first line for every commit: it becomes the human-facing progress entry. State what changed for the project, e.g. “Add retry to the upload step”; never “wip”, “update”, “changes”.
 - The repository's `commit-msg` hook validates the subject. If a commit is rejected, rewrite the first line and commit again. Do not bypass the hook with `--no-verify`.
-- Push as usual. A GitHub Action records every new commit once on `docflow-state`; a local sync later projects it into Obsidian. Do not hand-write progress and do not push `docflow-state` yourself.
+- Push as usual. A GitHub Action records every new commit once on `docflow-state`; a local sync (`docflow sync --refresh`, or the optional LaunchAgent via `docflow install-sync-agent`) later projects it into Obsidian. Do not hand-write progress and do not push `docflow-state` yourself.
 - `Next` is never inferred from commits. Do not call a model to summarize progress.
 
 ## Legacy repositories (v1 checkpoint workflow)

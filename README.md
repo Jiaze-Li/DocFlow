@@ -136,6 +136,22 @@ A checkpoint first persists its unit on `docflow-state`, then patches only that 
 
 Same-unit writes use an optimistic revision precondition. If another worktree changes that unit after it was read, the stale checkpoint/start is rejected and must reload before retrying; DocFlow never auto-merges competing Current/Next/History facts.
 
+### Commit-derived projection and automatic catch-up
+
+For commit-native units the projection comes from the commit ledger, not from text: **every distinct SHA is one entry** (two commits with the same subject stay two entries), only the first line of each message is shown (with its short SHA and date), the newest commit is **Current**, earlier ones are **History** in push order, and **Next** is `-` unless a person wrote one. Units without commits (v1) render as before. Presentation lives in `src/render.js` and can change without touching capture.
+
+Obsidian is refreshed with no model and no resident daemon:
+
+```bash
+docflow sync --refresh          # fetch the newest docflow-state, then project this repo
+docflow catch-up                # same for every repository DocFlow knows about
+docflow install-sync-agent      # writes ~/Library/LaunchAgents/com.docflow.catchup.plist (runs catch-up at load and every 10 min)
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.docflow.catchup.plist   # explicit opt-in to start it
+docflow uninstall-sync-agent
+```
+
+`catch-up` is idempotent: a Mac that was offline simply picks up all missed commits on its next run, with no loss or duplication. If origin is unreachable it still projects the newest durable state already present locally. A repository that fails (deleted path, malformed managed block) is reported without blocking the others, and a malformed managed block is never rewritten. Manual `docflow sync` always works. `docflow doctor` reports whether the agent is current, stale or missing.
+
 ## Task example
 
 ```bash

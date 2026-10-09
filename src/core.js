@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { commitUnitSections } from './render.js';
 import {
   STATE_BRANCH,
   commitStateFiles,
@@ -1265,11 +1266,20 @@ export function renderTaskUnit(task) {
   lines.push(`**Started:** ${displayDate(normalized.started)}`);
   lines.push(`**Status:** ${normalized.status}`);
   lines.push('');
-  lines.push('**Current**', normalized.current || '-', '');
-  lines.push('**Next**', normalized.next || '-', '');
+  // Commit-native units (v2) are projected from commits[] (identity = SHA); v1 units from
+  // current/history exactly as before.
+  const view = normalized.commits?.length
+    ? commitUnitSections(normalized)
+    : {
+      current: normalized.current || '-',
+      next: normalized.next || '-',
+      history: normalized.history.map((e) => e.text),
+    };
+  lines.push('**Current**', view.current, '');
+  lines.push('**Next**', view.next, '');
   lines.push('**History**');
-  if (normalized.history.length) {
-    for (const entry of normalized.history) lines.push(`- ${entry.text}`);
+  if (view.history.length) {
+    for (const text of view.history) lines.push(`- ${text}`);
   } else {
     lines.push('-');
   }
