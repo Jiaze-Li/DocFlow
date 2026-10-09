@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initRepo, loadState } from '../src/core.js';
@@ -180,7 +181,11 @@ test('empty and oversized commit messages that reach GitHub are ingested under a
   const good = commitOn(w.dev, 'A perfectly fine change');
   git(w.dev, 'commit', '--allow-empty', '-q', '--no-verify', '--allow-empty-message', '-m', '');
   const empty = head(w.dev);
-  git(w.dev, 'commit', '--allow-empty', '-q', '--no-verify', '-m', `Oversized body subject`, '-m', 'x'.repeat(150000));
+  // Pass the oversized message via a file: a 150000-char argv entry exceeds the per-argument
+  // limit on Linux (E2BIG).
+  const bigMessage = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'docflow-msg-')), 'message.txt');
+  fs.writeFileSync(bigMessage, `Oversized body subject\n\n${'x'.repeat(150000)}\n`);
+  git(w.dev, 'commit', '--allow-empty', '-q', '--no-verify', '-F', bigMessage);
   const huge = head(w.dev);
   const last = commitOn(w.dev, 'Change after the odd ones');
   git(w.dev, 'push', '-q', 'origin', 'feat/odd-messages');
