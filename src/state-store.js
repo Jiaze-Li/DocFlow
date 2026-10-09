@@ -188,8 +188,15 @@ function stateLockPath(repoRoot, homeDir, exec = execFileSync) {
   return path.join(homeDir, '.docflow', 'locks', `state-${key}.lock`);
 }
 
-function withStateLock(repoRoot, homeDir, exec, fn, { timeoutMs = 5000, staleMs = 30000 } = {}) {
+const activeLocks = new Set();
+
+export function withStateLock(repoRoot, homeDir, exec, fn, { timeoutMs = 5000, staleMs = 30000 } = {}) {
   const lockPath = stateLockPath(repoRoot, homeDir, exec);
+  if (activeLocks.has(lockPath)) {
+    // Re-entrant acquisition within the same process
+    return fn();
+  }
+
   fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
   const startedAt = Date.now();
   let descriptor = null;
@@ -217,9 +224,11 @@ function withStateLock(repoRoot, homeDir, exec, fn, { timeoutMs = 5000, staleMs 
     }
   }
 
+  activeLocks.add(lockPath);
   try {
     return fn();
   } finally {
+    activeLocks.delete(lockPath);
     try { fs.closeSync(descriptor); } catch { /* best effort */ }
     try { fs.unlinkSync(lockPath); } catch (error) {
       if (error?.code !== 'ENOENT') throw error;
@@ -246,6 +255,7 @@ export function commitStateFiles({
   homeDir = os.homedir(),
   exec = execFileSync,
   allowCreate = true,
+  beforeCommit = null,
 } = {}) {
   if (!repoRoot) throw new Error('repoRoot is required');
   if (!files || typeof files !== 'object' || Array.isArray(files)) throw new Error('files map is required');
@@ -272,6 +282,11 @@ export function commitStateFiles({
         }
       }
     }
+
+    // Final precondition evaluated against the freshly synchronized parent, so decisions
+    // made on an older view (e.g. repository-wide SHA dedup) cannot slip past a concurrent
+    // writer on another machine.
+    if (beforeCommit) beforeCommit({ parent });
 
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docflow-index-'));
     const indexPath = path.join(tempDir, 'index');
@@ -336,8 +351,29 @@ export function commitStateFiles({
   });
 }
 
+function plainUnitPath(id) {
+  return `.docflow/units/${encodeURIComponent(id)}.json`;
+}
+
+// Resolve the unit file for an id. Units written before long ids were hashed live at the
+// plain percent-encoded path; keep addressing them there so an update never forks a second
+// file for the same id.
+export function resolveStateUnitPath(repoRoot, taskId, exec = execFileSync) {
+  const canonical = stateUnitPath(taskId);
+  const legacy = plainUnitPath(String(taskId).trim());
+  if (legacy !== canonical && stateFileRevision(repoRoot, legacy, exec)) return legacy;
+  return canonical;
+}
+
 export function stateUnitPath(taskId) {
   const id = String(taskId ?? '').trim();
   if (!id) throw new Error('task id is required');
-  return `.docflow/units/${encodeURIComponent(id)}.json`;
+  const encoded = encodeURIComponent(id);
+  // Percent-encoding can inflate an id several-fold; keep file names within common 255-byte
+  // filesystem limits (in case the state branch is ever checked out). The unit's real id
+  // always lives inside the JSON, never in the file name.
+  if (Buffer.byteLength(encoded) <= 180) return `.docflow/units/${encoded}.json`;
+  // '%00' cannot appear in an encodeURIComponent() result (NUL is stripped from ids), so a
+  // hashed name never collides with a plain-encoded id.
+  return `.docflow/units/%00sha256-${createHash('sha256').update(id).digest('hex')}.json`;
 }

@@ -30,3 +30,8 @@ jobs:
           node --check src/install.js
           node --check src/doctor.js
           node --check src/cli.js
+          node --check src/validator.js
+          node --check src/hooks.js
+          node --check src/ingest.js
+          node --check src/github.js
+          node --check src/setup-repo.js

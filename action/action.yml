@@ -1,0 +1,13 @@
+name: DocFlow ingest
+description: Deterministic commit-native progress ingestion for DocFlow (git operations only, no model calls).
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - name: Ingest push / pull_request into docflow-state
+      shell: bash
+      env:
+        DOCFLOW_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      run: node "${{ github.action_path }}/../bin/docflow.js" ingest-github --event-name "$GITHUB_EVENT_NAME" --event-path "$GITHUB_EVENT_PATH"

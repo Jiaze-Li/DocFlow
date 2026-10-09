@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { commitUnitSections } from './render.js';
 import {
   STATE_BRANCH,
   commitStateFiles,
@@ -12,7 +13,9 @@ import {
   runtimePath,
   stateFileRevision,
   stateStoreStatus,
+  resolveStateUnitPath,
   stateUnitPath,
+  withStateLock,
 } from './state-store.js';
 
 export const SCHEMA_VERSION = 1;
@@ -29,6 +32,9 @@ const DURABLE_PROJECT_PATH = '.docflow/project.md';
 const DURABLE_UNITS_PREFIX = '.docflow/units';
 
 export const STATUS_VALUES = new Set(['In progress', 'Waiting', 'Paused', 'Completed', 'Abandoned']);
+// Single limit for unit ids, branch names, runtime/active ids and marker keys so state
+// written by one operation is always readable and projectable by every other.
+export const MAX_TASK_ID_LENGTH = 200;
 const TERMINAL_STATUSES = new Set(['Completed', 'Abandoned']);
 
 function clean(value, label, { required = false, max = 4000 } = {}) {
@@ -154,9 +160,89 @@ export function defaultRuntime() {
   return { schemaVersion: SCHEMA_VERSION, activeTaskId: null, activeSession: null, lastCheckpoint: null };
 }
 
+function normalizeIsoDate(value, label, { required = false } = {}) {
+  const text = clean(value, label, { required, max: 80 });
+  if (!text) return null;
+  const d = new Date(text);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`${label} must be a valid ISO-8601 date string: ${text}`);
+  }
+  return text;
+}
+
+// Strip the ref prefix first (GitHub sends refs/heads/<name>), then apply the id limit.
+export function normalizeBranchName(branch) {
+  const stripped = clean(branch, 'branch', { required: true, max: MAX_TASK_ID_LENGTH + 11 }).replace(/^refs\/heads\//, '');
+  return clean(stripped, 'branch', { required: true, max: MAX_TASK_ID_LENGTH });
+}
+
+export function commitSubject(message) {
+  const line = String(message ?? '').replace(/\r/g, '').split('\n').map((l) => l.trim()).find(Boolean) || '';
+  return line.length > 2000 ? `${line.slice(0, 1999)}…` : line;
+}
+
+function validateCommitProgress(commit) {
+  if (!commit || typeof commit !== 'object' || Array.isArray(commit)) throw new Error('Invalid commit progress event');
+  const rawSha = clean(commit.sha, 'commit.sha', { required: true, max: 64 });
+  if (!/^[0-9a-f]{7,64}$/i.test(rawSha)) throw new Error(`Invalid commit sha: ${rawSha}`);
+  const sha = rawSha.toLowerCase();
+  const branch = clean(commit.branch, 'commit.branch', { required: true, max: MAX_TASK_ID_LENGTH });
+  const timestamp = normalizeIsoDate(commit.timestamp, 'commit.timestamp', { required: true });
+  // The first non-empty line is the canonical progress text. Bodies and any optional
+  // summary field are never promoted into progress.
+  const message = commitSubject(clean(commit.message, 'commit.message', { required: true, max: 100000 }));
+  if (!message) throw new Error('commit.message is required');
+  return { sha, branch, timestamp, message };
+}
+
+function validatePullRequest(pr) {
+  if (!pr || typeof pr !== 'object' || Array.isArray(pr)) throw new Error('Invalid PR metadata');
+  const number = Number(pr.number);
+  if (!Number.isInteger(number) || number <= 0) throw new Error('Invalid PR number');
+  const state = clean(pr.state, 'pr.state', { required: true, max: 50 });
+  const title = pr.title == null ? null : clean(pr.title, 'pr.title', { max: 300 });
+  const url = pr.url == null ? null : clean(pr.url, 'pr.url', { max: 1000 });
+  const merged = pr.merged == null ? undefined : Boolean(pr.merged);
+  const mergedAt = pr.mergedAt == null ? null : normalizeIsoDate(pr.mergedAt, 'pr.mergedAt');
+  const closedAt = pr.closedAt == null ? null : normalizeIsoDate(pr.closedAt, 'pr.closedAt');
+  const updatedAt = pr.updatedAt == null ? null : normalizeIsoDate(pr.updatedAt, 'pr.updatedAt');
+  return {
+    number,
+    state,
+    ...(title ? { title } : {}),
+    ...(url ? { url } : {}),
+    ...(merged !== undefined ? { merged } : {}),
+    ...(mergedAt ? { mergedAt } : {}),
+    ...(closedAt ? { closedAt } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
+  };
+}
+
+const BASELINE_BRANCHES = ['main', 'master'];
+
+export function resolveBaseBranchName(repoRoot, exec = execFileSync, defaultBranch = null) {
+  // An explicit name (CI clones have no origin/HEAD) wins over the symbolic-ref fallback.
+  const explicit = String(defaultBranch ?? process.env.DOCFLOW_DEFAULT_BRANCH ?? '').trim().replace(/^refs\/heads\//, '');
+  if (explicit) return explicit;
+  const symRef = gitOutput(repoRoot, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], exec, { allowFailure: true }).trim();
+  const prefix = 'refs/remotes/origin/';
+  return symRef.startsWith(prefix) ? symRef.slice(prefix.length) : '';
+}
+
+export function isDevelopmentBranch(branch, { repoRoot = null, exec = execFileSync, defaultBranch = null } = {}) {
+  const name = String(branch ?? '').trim().replace(/^refs\/heads\//, '');
+  if (!name) return false;
+  const excluded = new Set([...BASELINE_BRANCHES, STATE_BRANCH]);
+  if (repoRoot || defaultBranch) {
+    const base = repoRoot ? resolveBaseBranchName(repoRoot, exec, defaultBranch) : String(defaultBranch).trim().replace(/^refs\/heads\//, '');
+    if (base) excluded.add(base);
+  }
+  return !excluded.has(name);
+}
+
 function validateTask(task) {
   if (!task || typeof task !== 'object' || Array.isArray(task)) throw new Error('Invalid DocFlow task');
-  task.id = clean(task.id, 'task.id', { required: true, max: 120 });
+  task.id = clean(task.id, 'task.id', { required: true, max: MAX_TASK_ID_LENGTH });
   task.title = clean(task.title, 'task.title', { required: true, max: 300 });
   task.task = clean(task.task, 'task.task', { required: true, max: 2000 });
   task.started = clean(task.started, 'task.started', { required: true, max: 80 });
@@ -170,6 +256,26 @@ function validateTask(task) {
   });
   task.completed = task.completed == null ? null : clean(task.completed, 'task.completed', { required: true, max: 80 });
   task.outcome = task.outcome == null ? null : clean(task.outcome, 'task.outcome', { required: true, max: 300 });
+
+  if (task.branch != null) {
+    task.branch = clean(task.branch, 'task.branch', { required: true, max: MAX_TASK_ID_LENGTH });
+  }
+
+  if (task.commits != null) {
+    if (!Array.isArray(task.commits) || task.commits.length > 20000) throw new Error('Invalid DocFlow task commits');
+    const seenShas = new Set();
+    task.commits = task.commits.map((c) => {
+      const validated = validateCommitProgress(c);
+      if (seenShas.has(validated.sha)) throw new Error(`Duplicate commit SHA in task: ${validated.sha}`);
+      seenShas.add(validated.sha);
+      return validated;
+    });
+  }
+
+  if (task.pr != null) {
+    task.pr = validatePullRequest(task.pr);
+  }
+
   return task;
 }
 
@@ -185,7 +291,7 @@ export function validateState(state) {
     seen.add(normalized.id);
     return normalized;
   });
-  state.activeTaskId = state.activeTaskId == null ? null : clean(state.activeTaskId, 'activeTaskId', { required: true, max: 120 });
+  state.activeTaskId = state.activeTaskId == null ? null : clean(state.activeTaskId, 'activeTaskId', { required: true, max: MAX_TASK_ID_LENGTH });
   if (state.activeTaskId && !seen.has(state.activeTaskId)) throw new Error('activeTaskId does not exist');
   state.updatedAt = state.updatedAt == null ? null : clean(state.updatedAt, 'updatedAt', { required: true, max: 80 });
   return state;
@@ -197,7 +303,7 @@ export function validateRuntime(runtime) {
   }
   runtime.activeTaskId = runtime.activeTaskId == null
     ? null
-    : clean(runtime.activeTaskId, 'runtime.activeTaskId', { required: true, max: 120 });
+    : clean(runtime.activeTaskId, 'runtime.activeTaskId', { required: true, max: MAX_TASK_ID_LENGTH });
   for (const key of ['activeSession', 'lastCheckpoint']) {
     if (runtime[key] != null && (typeof runtime[key] !== 'object' || Array.isArray(runtime[key]))) throw new Error(`Invalid ${key}`);
   }
@@ -286,9 +392,9 @@ function durableUnitText(task, updatedAt) {
 
 function writeTaskUnit(repoRoot, task, {
   updatedAt = isoNow(), homeDir = os.homedir(), exec = execFileSync, message = null,
-  expectedRevision = undefined,
+  expectedRevision = undefined, beforeCommit = null,
 } = {}) {
-  const unitPath = stateUnitPath(task.id);
+  const unitPath = resolveStateUnitPath(repoRoot, task.id, exec);
   return commitStateFiles({
     repoRoot,
     homeDir,
@@ -297,6 +403,7 @@ function writeTaskUnit(repoRoot, task, {
     expectedFiles: expectedRevision === undefined ? null : { [unitPath]: expectedRevision },
     message: message || `DocFlow: update ${task.id}`,
     allowCreate: false,
+    beforeCommit,
   });
 }
 
@@ -361,7 +468,7 @@ export function initRepo({
     };
     if (legacyState) {
       for (const task of legacyState.tasks) {
-        files[stateUnitPath(task.id)] = durableUnitText(task, legacyState.updatedAt || isoNow(now));
+        files[resolveStateUnitPath(repoRoot, task.id, exec)] = durableUnitText(task, legacyState.updatedAt || isoNow(now));
       }
     }
     commitStateFiles({
@@ -383,7 +490,7 @@ export function initRepo({
     const files = {};
     const expectedFiles = {};
     for (const task of legacyState.tasks) {
-      const unitPath = stateUnitPath(task.id);
+      const unitPath = resolveStateUnitPath(repoRoot, task.id, exec);
       const existing = readStateFile(repoRoot, unitPath, exec);
       if (existing == null) {
         files[unitPath] = durableUnitText(task, legacyState.updatedAt || isoNow(now));
@@ -439,8 +546,8 @@ export function startTask({
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
-  const taskId = clean(id, 'task id', { required: true, max: 120 });
-  const unitPath = stateUnitPath(taskId);
+  const taskId = clean(id, 'task id', { required: true, max: MAX_TASK_ID_LENGTH });
+  const unitPath = resolveStateUnitPath(repoRoot, taskId, exec);
   const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
   const state = loadState(repoRoot, exec);
   if (expectedRevision != null || state.tasks.some((entry) => entry.id === taskId)) {
@@ -470,7 +577,7 @@ export function startTask({
 }
 
 function findTask(state, id) {
-  const taskId = clean(id || state.activeTaskId, 'task id', { required: true, max: 120 });
+  const taskId = clean(id || state.activeTaskId, 'task id', { required: true, max: MAX_TASK_ID_LENGTH });
   const task = state.tasks.find((entry) => entry.id === taskId);
   if (!task) throw new Error(`Unknown DocFlow task: ${taskId}`);
   return task;
@@ -501,7 +608,7 @@ export function checkpoint({
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   const runtime = loadRuntime(repoRoot, exec);
-  const explicitId = id == null ? null : clean(id, 'task id', { required: true, max: 120 });
+  const explicitId = id == null ? null : clean(id, 'task id', { required: true, max: MAX_TASK_ID_LENGTH });
   if (runtime.activeSession && explicitId && explicitId !== runtime.activeSession.taskId) {
     throw new Error(
       `Cannot checkpoint task ${explicitId} while an uncheckpointed round is active for ${runtime.activeSession.taskId}`,
@@ -510,12 +617,12 @@ export function checkpoint({
   const targetId = clean(
     runtime.activeSession?.taskId || explicitId || runtime.activeTaskId,
     'task id',
-    { required: true, max: 120 },
+    { required: true, max: MAX_TASK_ID_LENGTH },
   );
   // Capture the unit revision before loading the mutable snapshot. If another
   // actor advances the unit before this checkpoint commits, the CAS precondition
   // below rejects the stale write instead of silently dropping Current/History.
-  const expectedRevision = stateFileRevision(repoRoot, stateUnitPath(targetId), exec);
+  const expectedRevision = stateFileRevision(repoRoot, resolveStateUnitPath(repoRoot, targetId, exec), exec);
   const state = loadState(repoRoot, exec);
   const task = findTask(state, targetId);
   const newCurrent = clean(current, 'current', { required: true, max: 2000 });
@@ -557,6 +664,586 @@ export function checkpoint({
   return { repoRoot, task, state: loadState(repoRoot, exec), runtime: savedRuntime, obsidian };
 }
 
+export function getBranchUnit(repoRoot, branch, exec = execFileSync) {
+  const branchName = normalizeBranchName(branch);
+  const state = loadState(repoRoot, exec);
+  return state.tasks.find((t) => t.branch === branchName || (t.id === branchName && t.branch == null)) || null;
+}
+
+export function findCommitInState(repoRoot, sha, exec = execFileSync) {
+  const targetSha = String(sha ?? '').trim().toLowerCase();
+  if (!targetSha) return null;
+  const state = loadState(repoRoot, exec);
+  for (const task of state.tasks) {
+    if (!Array.isArray(task.commits)) continue;
+    const found = task.commits.find((c) => c.sha.toLowerCase() === targetSha);
+    if (found) {
+      return { task, commit: found };
+    }
+  }
+  return null;
+}
+
+export function resolveFullCommitSha(repoRoot, shaOrRev, exec = execFileSync) {
+  const rev = String(shaOrRev ?? '').trim();
+  if (!rev) return '';
+  const resolved = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`], exec, { allowFailure: true }).trim();
+  return resolved.toLowerCase();
+}
+
+// Every resolvable baseline tip: the repository default branch (origin/HEAD) plus
+// main/master, local and remote. A commit reachable from any of them is baseline work.
+export function resolveBaseBranchShas(repoRoot, exec = execFileSync, defaultBranch = null) {
+  const refs = [];
+  const symRef = gitOutput(repoRoot, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], exec, { allowFailure: true }).trim();
+  if (symRef) refs.push(symRef);
+  const defaultName = resolveBaseBranchName(repoRoot, exec, defaultBranch);
+  for (const name of new Set([defaultName, ...BASELINE_BRANCHES].filter(Boolean))) {
+    refs.push(`refs/heads/${name}`, `refs/remotes/origin/${name}`);
+  }
+  const shas = new Set();
+  for (const ref of refs) {
+    const sha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], exec, { allowFailure: true }).trim();
+    if (sha) shas.add(sha);
+  }
+  return [...shas];
+}
+
+function isCommitReachableFromBase(repoRoot, sha, exec = execFileSync, defaultBranch = null) {
+  if (!sha) return false;
+  const baseShas = resolveBaseBranchShas(repoRoot, exec, defaultBranch);
+  if (!baseShas.length) {
+    // If base branch cannot be resolved in git, fail closed: do not assume commits are unique
+    return true;
+  }
+  for (const baseSha of baseShas) {
+    try {
+      exec('git', ['-C', repoRoot, 'merge-base', '--is-ancestor', sha, baseSha], { stdio: 'ignore' });
+      return true;
+    } catch (error) {
+      // Exit code 1 means NOT ancestor of this base tip. Anything else (e.g. 128 for an
+      // invalid object) fails closed.
+      if (!(error && typeof error.status === 'number' && error.status === 1)) return true;
+    }
+  }
+  return false;
+}
+
+export function createBranchUnit({
+  cwd = process.cwd(),
+  branch,
+  now = new Date(),
+  exec = execFileSync,
+  homeDir = os.homedir(),
+  defaultBranch = null,
+} = {}) {
+  const repoRoot = resolveRepoRoot(cwd, exec);
+  if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
+  const branchName = normalizeBranchName(branch);
+  if (!isDevelopmentBranch(branchName, { repoRoot, exec, defaultBranch })) {
+    throw new Error(`Branch '${branchName}' is not a development branch`);
+  }
+
+  return withStateLock(repoRoot, homeDir, exec, () => {
+    const unitPath = resolveStateUnitPath(repoRoot, branchName, exec);
+    const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+
+    const existing = getBranchUnit(repoRoot, branchName, exec);
+    if (existing) {
+      return { repoRoot, task: existing, created: false };
+    }
+
+    // A branch must exist in Git and possess commits beyond base branch before creating a durable unit.
+    // If the branch does not exist in git (tipSha is empty), or is freshly cut from main/master (no commits
+    // of its own beyond base), or its tip commit is already recorded in durable state,
+    // do not create an empty redundant unit.
+    const tipSha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}^{commit}`], exec, { allowFailure: true }).trim();
+    if (!tipSha) {
+      return { repoRoot, task: null, created: false };
+    }
+
+    const tipRecorded = findCommitInState(repoRoot, tipSha, exec);
+    if (tipRecorded) {
+      return { repoRoot, task: tipRecorded.task, created: false };
+    }
+
+    // Fail closed: an unresolvable base, or a tip already on base, means the branch has no
+    // commits of its own, so no empty unit is created.
+    if (isCommitReachableFromBase(repoRoot, tipSha, exec, defaultBranch)) {
+      return { repoRoot, task: null, created: false };
+    }
+
+    const entry = validateTask({
+      id: branchName,
+      branch: branchName,
+      title: branchName,
+      task: `Development branch: ${branchName}`,
+      started: isoNow(now),
+      status: 'In progress',
+      current: '',
+      next: '',
+      history: [],
+      commits: [],
+      pr: null,
+      completed: null,
+      outcome: null,
+    });
+
+    try {
+      writeTaskUnit(repoRoot, entry, {
+        updatedAt: isoNow(now),
+        homeDir,
+        exec,
+        message: `DocFlow: create branch unit ${branchName}`,
+        expectedRevision,
+      });
+    } catch (error) {
+      if (error?.message && error.message.includes('DocFlow durable state changed concurrently for')) {
+        const latest = getBranchUnit(repoRoot, branchName, exec);
+        if (latest) {
+          return { repoRoot, task: latest, created: false };
+        }
+      }
+      throw error;
+    }
+
+    return { repoRoot, task: entry, created: true };
+  });
+}
+
+export function recordCommitProgress({
+  cwd = process.cwd(),
+  branch,
+  commit,
+  now = new Date(),
+  exec = execFileSync,
+  homeDir = os.homedir(),
+  defaultBranch = null,
+} = {}) {
+  const repoRoot = resolveRepoRoot(cwd, exec);
+  if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
+  const branchName = normalizeBranchName(branch);
+  if (!isDevelopmentBranch(branchName, { repoRoot, exec, defaultBranch })) {
+    return { repoRoot, ignored: true, reason: `Branch '${branchName}' is not a development branch` };
+  }
+
+  const validCommit = validateCommitProgress({ ...commit, branch: branchName });
+
+  // Canonicalize commit SHA to full object ID and verify that the commit object exists in Git.
+  // If the object does not exist or fails to resolve to a commit, reject the progress event fail-closed.
+  const fullSha = resolveFullCommitSha(repoRoot, validCommit.sha, exec);
+  if (!fullSha) {
+    return { repoRoot, ignored: true, reason: `Commit '${validCommit.sha}' is invalid or does not exist in git` };
+  }
+  validCommit.sha = fullSha;
+
+  const unitPath = resolveStateUnitPath(repoRoot, branchName, exec);
+
+  // Pre-check outside lock for fast-path idempotency on already-recorded commits
+  const initialGlobal = findCommitInState(repoRoot, validCommit.sha, exec);
+  if (initialGlobal) {
+    return {
+      repoRoot,
+      task: initialGlobal.task,
+      commit: initialGlobal.commit,
+      alreadyRecorded: true,
+      created: false,
+    };
+  }
+
+  return withStateLock(repoRoot, homeDir, exec, () => {
+    // Observe the newest published state before deciding. The local lock only serializes
+    // writers on this machine; across machines the fast-forward-only state push is the
+    // linearization point, so (a) refresh first and (b) re-assert the dedup precondition
+    // against the final synchronized parent right before the state commit (beforeCommit).
+    refreshStateFromOrigin({ repoRoot, homeDir, exec });
+
+    // Atomically re-check repository-wide deduplication inside the state lock.
+    const existingGlobally = findCommitInState(repoRoot, validCommit.sha, exec);
+    if (existingGlobally) {
+      return {
+        repoRoot,
+        task: existingGlobally.task,
+        commit: existingGlobally.commit,
+        alreadyRecorded: true,
+        created: false,
+      };
+    }
+
+    const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+
+    let task = getBranchUnit(repoRoot, branchName, exec);
+    let created = false;
+
+    // Base reachability only guards creation of NEW units from baseline commits. A commit
+    // for an already-known branch unit stays recordable even if delivery arrived after the
+    // branch was merged and the commit became reachable from base.
+    if (!task && isCommitReachableFromBase(repoRoot, validCommit.sha, exec, defaultBranch)) {
+      return { repoRoot, ignored: true, reason: `Commit ${validCommit.sha.slice(0, 7)} is already reachable from base` };
+    }
+
+    if (!task) {
+      task = validateTask({
+        id: branchName,
+        branch: branchName,
+        title: branchName,
+        task: `Development branch: ${branchName}`,
+        started: validCommit.timestamp || isoNow(now),
+        status: 'In progress',
+        current: '',
+        next: '',
+        history: [],
+        commits: [],
+        pr: null,
+        completed: null,
+        outcome: null,
+      });
+      created = true;
+    } else {
+      task = JSON.parse(JSON.stringify(task));
+    }
+
+    task.commits = task.commits || [];
+
+    // Double-check: re-check against the loaded unit's commits before appending
+    const alreadyInUnit = task.commits.find((c) => c.sha.toLowerCase() === validCommit.sha.toLowerCase());
+    if (alreadyInUnit) {
+      return {
+        repoRoot,
+        task,
+        commit: alreadyInUnit,
+        alreadyRecorded: true,
+        created: false,
+      };
+    }
+
+    task.commits.push(validCommit);
+
+    const newCurrent = validCommit.message;
+    if (task.current && task.current !== newCurrent) {
+      const last = task.history.at(-1)?.text;
+      if (last !== task.current) {
+        task.history.push({ at: validCommit.timestamp || isoNow(now), text: task.current });
+      }
+    }
+    task.current = newCurrent;
+
+    try {
+      writeTaskUnit(repoRoot, task, {
+        updatedAt: isoNow(now),
+        homeDir,
+        exec,
+        message: `DocFlow: record commit ${validCommit.sha.slice(0, 7)} on ${branchName}`,
+        expectedRevision,
+        beforeCommit: () => {
+          if (findCommitInState(repoRoot, validCommit.sha, exec)) {
+            throw Object.assign(new Error('DocFlow commit already recorded by a concurrent writer'), { code: 'DOCFLOW_SHA_RECORDED' });
+          }
+        },
+      });
+    } catch (error) {
+      if (error?.code === 'DOCFLOW_SHA_RECORDED') {
+        const latest = findCommitInState(repoRoot, validCommit.sha, exec);
+        return { repoRoot, task: latest.task, commit: latest.commit, alreadyRecorded: true, created: false };
+      }
+      if (error?.message && error.message.includes('DocFlow durable state changed concurrently for')) {
+        // Re-read latest state: check both the target branch unit and repository-wide units
+        const latestGlobal = findCommitInState(repoRoot, validCommit.sha, exec);
+        if (latestGlobal) {
+          return {
+            repoRoot,
+            task: latestGlobal.task,
+            commit: latestGlobal.commit,
+            alreadyRecorded: true,
+            created: false,
+          };
+        }
+      }
+      // If the latest state does NOT contain this SHA, retain the true CAS conflict error
+      throw error;
+    }
+
+    return {
+      repoRoot,
+      task,
+      commit: validCommit,
+      alreadyRecorded: false,
+      created,
+    };
+  });
+}
+
+function isCasConflict(error) {
+  return Boolean(error?.message && error.message.includes('DocFlow durable state changed concurrently for'));
+}
+
+/**
+ * Record an ordered batch of commits (one push) for a branch unit in a single durable write.
+ * Every distinct SHA becomes exactly one progress event; SHAs already recorded anywhere in the
+ * repository are skipped. Text equality is never used for identity.
+ */
+export function recordCommitsProgress({
+  cwd = process.cwd(),
+  branch,
+  commits,
+  now = new Date(),
+  exec = execFileSync,
+  homeDir = os.homedir(),
+  defaultBranch = null,
+  // SHAs that ingestion PROVED belong to this branch although base now contains them
+  // (commits introduced by a merge commit's second parent). Only these skip the baseline
+  // filter when a unit is first created; everything else reachable from base stays excluded.
+  branchOwnedShas = [],
+} = {}) {
+  const repoRoot = resolveRepoRoot(cwd, exec);
+  if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
+  const branchName = normalizeBranchName(branch);
+  if (!isDevelopmentBranch(branchName, { repoRoot, exec, defaultBranch })) {
+    return { repoRoot, ignored: true, reason: `Branch '${branchName}' is not a development branch`, recorded: [], alreadyRecorded: [], rejected: [] };
+  }
+  if (!Array.isArray(commits)) throw new Error('commits must be an array');
+
+  const rejected = [];
+  const valid = [];
+  const seenInput = new Set();
+  for (const raw of commits) {
+    // A commit that reached GitHub with an unusable message (empty, oversized) is still
+    // progress: it is ingested under a stand-in subject instead of failing the whole push.
+    let candidate;
+    try {
+      candidate = validateCommitProgress({
+        ...raw, branch: branchName,
+        message: commitSubject(String(raw?.message ?? '').slice(0, 20000)) || '(empty commit message)',
+      });
+    } catch (error) {
+      rejected.push({ sha: String(raw?.sha ?? ''), reason: error.message });
+      continue;
+    }
+    const fullSha = resolveFullCommitSha(repoRoot, candidate.sha, exec);
+    if (!fullSha) {
+      rejected.push({ sha: candidate.sha, reason: 'invalid or does not exist in git' });
+      continue;
+    }
+    if (seenInput.has(fullSha)) continue;
+    seenInput.add(fullSha);
+    valid.push({ ...candidate, sha: fullSha });
+  }
+
+  return withStateLock(repoRoot, homeDir, exec, () => {
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      // Observe the newest published state first; the fast-forward-only state push (plus the
+      // beforeCommit assertion below) is what serializes writers across machines.
+      refreshStateFromOrigin({ repoRoot, homeDir, exec });
+      const unitPath = resolveStateUnitPath(repoRoot, branchName, exec);
+      const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+      const state = loadState(repoRoot, exec);
+      const owner = new Map();
+      for (const unit of state.tasks) for (const c of unit.commits || []) owner.set(c.sha.toLowerCase(), unit.id);
+
+      const alreadyRecorded = valid.filter((c) => owner.has(c.sha)).map((c) => ({ sha: c.sha, unitId: owner.get(c.sha) }));
+      let pending = valid.filter((c) => !owner.has(c.sha));
+
+      const existing = state.tasks.find((t) => t.branch === branchName || (t.id === branchName && t.branch == null)) || null;
+      // Base reachability only guards creation of NEW units from baseline commits; a known
+      // unit keeps accepting delayed commits even after the branch was merged.
+      if (!existing) {
+        const owned = new Set((branchOwnedShas || []).map((sha) => String(sha).toLowerCase()));
+        pending = pending.filter((c) => owned.has(c.sha) || !isCommitReachableFromBase(repoRoot, c.sha, exec, defaultBranch));
+      }
+
+      if (!pending.length) {
+        return {
+          repoRoot, task: existing, created: false, recorded: [], alreadyRecorded, rejected,
+          ...(existing ? {} : { ignored: true, reason: 'No new commits beyond base for a new branch unit' }),
+        };
+      }
+
+      const task = existing ? JSON.parse(JSON.stringify(existing)) : validateTask({
+        id: branchName, branch: branchName, title: branchName, task: `Development branch: ${branchName}`,
+        started: pending[0].timestamp || isoNow(now), status: 'In progress', current: '', next: '',
+        history: [], commits: [], pr: null, completed: null, outcome: null,
+      });
+      task.commits = task.commits || [];
+      for (const c of pending) {
+        // Each distinct SHA is its own progress event; the superseded Current always moves to
+        // History even when two subjects are textually identical.
+        if (task.current) task.history.push({ at: c.timestamp, text: task.current });
+        task.commits.push(c);
+        task.current = c.message;
+      }
+
+      try {
+        writeTaskUnit(repoRoot, task, {
+          updatedAt: isoNow(now), homeDir, exec, expectedRevision,
+          message: `DocFlow: record ${pending.length} commit${pending.length === 1 ? '' : 's'} on ${branchName}`,
+          beforeCommit: () => {
+            const latest = loadState(repoRoot, exec);
+            const taken = new Set(latest.tasks.flatMap((u) => (u.commits || []).map((c) => c.sha.toLowerCase())));
+            if (pending.some((c) => taken.has(c.sha))) {
+              throw Object.assign(new Error('DocFlow commit already recorded by a concurrent writer'), { code: 'DOCFLOW_SHA_RECORDED' });
+            }
+          },
+        });
+      } catch (error) {
+        if (error?.code === 'DOCFLOW_SHA_RECORDED' || isCasConflict(error)) {
+          lastError = error;
+          continue; // re-read the newest state and recompute
+        }
+        throw error;
+      }
+      return { repoRoot, task, created: !existing, recorded: pending, alreadyRecorded, rejected };
+    }
+    throw lastError;
+  });
+}
+
+export function recordPullRequestEvent({
+  cwd = process.cwd(),
+  branch,
+  pr,
+  now = new Date(),
+  exec = execFileSync,
+  homeDir = os.homedir(),
+  defaultBranch = null,
+  // The GitHub webhook action ('opened' | 'reopened' | 'synchronize' | 'closed'). Only a
+  // genuine 'reopened' event may restore an abandoned unit.
+  action = null,
+} = {}) {
+  const repoRoot = resolveRepoRoot(cwd, exec);
+  if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
+  const branchName = normalizeBranchName(branch);
+  if (!isDevelopmentBranch(branchName, { repoRoot, exec, defaultBranch })) {
+    return { repoRoot, ignored: true, reason: `Branch '${branchName}' is not a development branch` };
+  }
+
+  const validPr = validatePullRequest(pr);
+
+  const attemptOnce = () => {
+    const unitPath = resolveStateUnitPath(repoRoot, branchName, exec);
+    const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+
+    let task = getBranchUnit(repoRoot, branchName, exec);
+    let created = false;
+
+    if (!task) {
+      // Before creating a durable unit from a PR event, verify that the branch exists in Git
+      // and has commits beyond the base branch, and is not already recorded elsewhere.
+      const tipSha = gitOutput(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branchName}^{commit}`], exec, { allowFailure: true }).trim();
+      if (!tipSha) {
+        return { repoRoot, ignored: true, reason: `Branch '${branchName}' does not exist in git` };
+      }
+
+      if (isCommitReachableFromBase(repoRoot, tipSha, exec, defaultBranch)) {
+        return { repoRoot, ignored: true, reason: `Branch '${branchName}' tip is reachable from base branch` };
+      }
+
+      const tipRecorded = findCommitInState(repoRoot, tipSha, exec);
+      if (tipRecorded) {
+        return { repoRoot, ignored: true, reason: `Branch tip ${tipSha.slice(0, 7)} already recorded in unit '${tipRecorded.task.id}'` };
+      }
+
+      task = validateTask({
+        id: branchName,
+        branch: branchName,
+        title: validPr.title || branchName,
+        task: `Development branch: ${branchName}`,
+        started: isoNow(now),
+        status: 'In progress',
+        current: '',
+        next: '',
+        history: [],
+        commits: [],
+        pr: validPr,
+        completed: null,
+        outcome: null,
+      });
+      created = true;
+    } else {
+      task = JSON.parse(JSON.stringify(task));
+    }
+
+    // Preserve existing merged state if already merged and incoming event is out-of-order
+    const wasAlreadyMerged = Boolean(task.pr?.merged || task.status === 'Completed');
+    const merged = validPr.merged !== undefined ? (validPr.merged || wasAlreadyMerged) : wasAlreadyMerged;
+
+    // Ordering: GitHub stamps every event with the PR's updated_at. An event older than the
+    // newest one already applied is stale and must not change the lifecycle (a merged event
+    // is terminal and always applies).
+    const lastAppliedAt = task.pr?.updatedAt ?? null;
+    // A genuine reopen is judged against the recorded CLOSURE time, not delivery order: events
+    // arrive out of order, so it may legitimately trail a newer synchronize. Without a provable
+    // timestamp we cannot rule out a delayed delivery, so it is not applied.
+    const canRestore = action === 'reopened' && validPr.state === 'open' && !merged
+      && task.status === 'Abandoned' && Boolean(validPr.updatedAt)
+      && (!task.completed || validPr.updatedAt >= task.completed);
+    const unrestorableReopen = action === 'reopened' && task.status === 'Abandoned' && !canRestore;
+    // Any other event older than the newest one already applied is stale (a merged event is
+    // terminal and always applies). Stale events never rewrite the recorded PR state.
+    const stale = !validPr.merged && !canRestore
+      && Boolean(validPr.updatedAt && lastAppliedAt && validPr.updatedAt < lastAppliedAt);
+    if ((stale || unrestorableReopen) && !created) {
+      return { repoRoot, task, created: false, ignored: true, reason: 'Stale pull request event ignored (older than the last applied event or closure)' };
+    }
+
+    task.pr = {
+      ...(task.pr || {}),
+      ...validPr,
+      merged,
+      // The recorded PR time only moves forward.
+      ...(lastAppliedAt && (!validPr.updatedAt || validPr.updatedAt < lastAppliedAt) ? { updatedAt: lastAppliedAt } : {}),
+    };
+
+    if (merged) {
+      task.status = 'Completed';
+      task.outcome = 'Merged';
+      task.completed ??= validPr.mergedAt || isoNow(now);
+    } else if (validPr.state === 'closed' && !merged) {
+      if (task.status !== 'Completed') {
+        task.status = 'Abandoned';
+        task.outcome = 'Closed without merge';
+        // A newer close (after a reopen) must record its own time; the same close replayed keeps it.
+        task.completed = validPr.closedAt || task.completed || isoNow(now);
+      }
+    } else if (canRestore) {
+      task.status = 'In progress';
+      task.outcome = null;
+      task.completed = null;
+    }
+
+    writeTaskUnit(repoRoot, task, {
+      updatedAt: isoNow(now),
+      homeDir,
+      exec,
+      message: `DocFlow: PR #${validPr.number} ${merged ? 'merged' : validPr.state} on ${branchName}`,
+      expectedRevision,
+    });
+
+    return {
+      repoRoot,
+      task,
+      created,
+    };
+  };
+
+  return withStateLock(repoRoot, homeDir, exec, () => {
+    // Same discipline as commit recording: observe the newest published state, and re-read it
+    // when another writer (e.g. a concurrent push run for this branch) wins the race, so a
+    // merged/closed event is never dropped on stale state.
+    let lastError = null;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      refreshStateFromOrigin({ repoRoot, homeDir, exec });
+      try {
+        return attemptOnce();
+      } catch (error) {
+        if (!isCasConflict(error)) throw error;
+        lastError = error;
+      }
+    }
+    throw lastError;
+  });
+}
+
 export function gateStatus({ cwd = process.cwd(), exec = execFileSync } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   if (!loadRepoConfig(repoRoot, exec)) {
@@ -592,7 +1279,7 @@ export function projectStatus({ cwd = process.cwd(), exec = execFileSync } = {})
 }
 
 function unitMarkerKey(taskId) {
-  return encodeURIComponent(clean(taskId, 'task id', { required: true, max: 120 }));
+  return encodeURIComponent(clean(taskId, 'task id', { required: true, max: MAX_TASK_ID_LENGTH }));
 }
 
 export function unitMarkers(taskId) {
@@ -617,11 +1304,20 @@ export function renderTaskUnit(task) {
   lines.push(`**Started:** ${displayDate(normalized.started)}`);
   lines.push(`**Status:** ${normalized.status}`);
   lines.push('');
-  lines.push('**Current**', normalized.current || '-', '');
-  lines.push('**Next**', normalized.next || '-', '');
+  // Commit-native units (v2) are projected from commits[] (identity = SHA); v1 units from
+  // current/history exactly as before.
+  const view = normalized.commits?.length
+    ? commitUnitSections(normalized)
+    : {
+      current: normalized.current || '-',
+      next: normalized.next || '-',
+      history: normalized.history.map((e) => e.text),
+    };
+  lines.push('**Current**', view.current, '');
+  lines.push('**Next**', view.next, '');
   lines.push('**History**');
-  if (normalized.history.length) {
-    for (const entry of normalized.history) lines.push(`- ${entry.text}`);
+  if (view.history.length) {
+    for (const text of view.history) lines.push(`- ${text}`);
   } else {
     lines.push('-');
   }
