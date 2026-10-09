@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-10-09T16:57:33.325Z",
+  "task": {
+    "id": "feat/obsidian-branch-view",
+    "branch": "feat/obsidian-branch-view",
+    "title": "feat/obsidian-branch-view",
+    "task": "Development branch: feat/obsidian-branch-view",
+    "started": "2026-10-10T00:57:19+08:00",
+    "status": "In progress",
+    "current": "Present commit-native progress by branch with PR and compact sections",
+    "next": "",
+    "history": [],
+    "commits": [
+      {
+        "sha": "cc7e02907f5926f1d22c5d844b4e3f2e5ae5fde9",
+        "branch": "feat/obsidian-branch-view",
+        "timestamp": "2026-10-10T00:57:19+08:00",
+        "message": "Present commit-native progress by branch with PR and compact sections"
+      }
+    ],
+    "pr": null,
+    "completed": null,
+    "outcome": null
+  }
+}
