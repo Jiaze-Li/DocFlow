@@ -8,16 +8,23 @@ export const STATE_BRANCH = 'docflow-state';
 export const STATE_REF = `refs/heads/${STATE_BRANCH}`;
 export const REMOTE_STATE_REF = `refs/remotes/origin/${STATE_BRANCH}`;
 
+// No Git call may block forever: a hung call would otherwise hold the state lock and pile up.
+export const GIT_TIMEOUT_MS = 60000;
+export const GIT_NETWORK_TIMEOUT_MS = 15000;
+const NO_PROMPT_ENV = { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o ConnectTimeout=10' };
+
 function git(repoRoot, args, exec = execFileSync, {
-  allowFailure = false, env = null, input = undefined,
+  allowFailure = false, env = null, input = undefined, timeout = GIT_TIMEOUT_MS, network = false,
 } = {}) {
   try {
     return String(exec('git', ['-C', repoRoot, ...args], {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
       maxBuffer: 32 * 1024 * 1024,
-      env: env ? { ...process.env, ...env } : process.env,
+      env: { ...process.env, ...(network ? NO_PROMPT_ENV : {}), ...(env ?? {}) },
       input,
+      timeout: network ? GIT_NETWORK_TIMEOUT_MS : timeout,
+      killSignal: 'SIGKILL',
     }) ?? '');
   } catch (error) {
     if (allowFailure) return '';
@@ -80,6 +87,7 @@ function refreshRemoteStateRef(repoRoot, exec = execFileSync) {
     repoRoot,
     ['ls-remote', '--heads', 'origin', STATE_REF],
     exec,
+    { network: true },
   ).trim();
   if (!advertised) {
     const stale = revParse(repoRoot, REMOTE_STATE_REF, exec);
@@ -98,6 +106,7 @@ function refreshRemoteStateRef(repoRoot, exec = execFileSync) {
       repoRoot,
       ['fetch', '--no-tags', 'origin', `${STATE_REF}:${REMOTE_STATE_REF}`],
       exec,
+      { network: true },
     );
   }
   return { configured: true, commit: remoteCommit };
@@ -127,7 +136,7 @@ function synchronizeStateParent(repoRoot, exec = execFileSync) {
 function pushStateCommit(repoRoot, commit, exec = execFileSync) {
   if (!commit || !originUrl(repoRoot, exec)) return { pushed: false, remoteCommit: null };
   try {
-    git(repoRoot, ['-c', 'remote.origin.mirror=false', 'push', 'origin', `${commit}:${STATE_REF}`], exec);
+    git(repoRoot, ['-c', 'remote.origin.mirror=false', 'push', 'origin', `${commit}:${STATE_REF}`], exec, { network: true });
   } catch (error) {
     throw new Error(
       `DocFlow durable state push failed; local state was not advanced. `
@@ -188,6 +197,18 @@ function stateLockPath(repoRoot, homeDir, exec = execFileSync) {
   return path.join(homeDir, '.docflow', 'locks', `state-${key}.lock`);
 }
 
+// A lock is stale only if its owner process is gone (or unknown) and it is older than staleMs.
+// A live owner is never robbed, however long it holds the lock; waiters fail via their own timeout.
+export function lockIsStale(lockPath, staleMs = 30000) {
+  const age = Date.now() - fs.statSync(lockPath).mtimeMs;
+  if (age <= staleMs) return false;
+  const pid = Number.parseInt(fs.readFileSync(lockPath, 'utf8'), 10);
+  if (!Number.isInteger(pid) || pid <= 0) return true;
+  try { process.kill(pid, 0); return false; } catch (error) {
+    return error?.code !== 'EPERM';
+  }
+}
+
 const activeLocks = new Set();
 
 export function withStateLock(repoRoot, homeDir, exec, fn, { timeoutMs = 5000, staleMs = 30000 } = {}) {
@@ -208,8 +229,7 @@ export function withStateLock(repoRoot, homeDir, exec, fn, { timeoutMs = 5000, s
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
       try {
-        const stat = fs.statSync(lockPath);
-        if (Date.now() - stat.mtimeMs > staleMs) {
+        if (lockIsStale(lockPath, staleMs)) {
           fs.unlinkSync(lockPath);
           continue;
         }

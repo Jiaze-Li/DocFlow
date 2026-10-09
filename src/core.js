@@ -10,6 +10,8 @@ import {
   listStateFiles,
   readStateFile,
   refreshStateFromOrigin,
+  lockIsStale,
+  GIT_TIMEOUT_MS,
   runtimePath,
   stateFileRevision,
   stateStoreStatus,
@@ -73,7 +75,7 @@ export function atomicWrite(filePath, content) {
 export function resolveRepoRoot(cwd = process.cwd(), exec = execFileSync) {
   try {
     return String(exec('git', ['-C', path.resolve(cwd), 'rev-parse', '--show-toplevel'], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, killSignal: 'SIGKILL',
     })).trim();
   } catch {
     throw new Error(`Not inside a git repository: ${path.resolve(cwd)}`);
@@ -84,6 +86,7 @@ function gitOutput(repoRoot, args, exec = execFileSync, { allowFailure = false }
   try {
     return String(exec('git', ['-C', repoRoot, ...args], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024,
+      timeout: GIT_TIMEOUT_MS, killSignal: 'SIGKILL',
     }) ?? '');
   } catch (error) {
     if (allowFailure) return '';
@@ -1474,8 +1477,7 @@ function withProjectNoteLock(homeDir, target, fn, { timeoutMs = 5000, staleMs = 
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
       try {
-        const stat = fs.statSync(lockPath);
-        if (Date.now() - stat.mtimeMs > staleMs) {
+        if (lockIsStale(lockPath, staleMs)) {
           fs.unlinkSync(lockPath);
           continue;
         }
@@ -1561,7 +1563,9 @@ export function syncObsidian({
     let next = ensureManagedContainer(existing);
     for (const task of tasks) next = upsertManagedUnit(next, task);
 
-    atomicWrite(target, next);
-    return { skipped: false, created, path: target, updatedTaskIds: tasks.map((task) => task.id) };
+    // Identical content is never rewritten: no new mtime, no churn for Obsidian/iCloud/Spotlight.
+    const unchanged = !created && next === existing;
+    if (!unchanged) atomicWrite(target, next);
+    return { skipped: false, created, unchanged, path: target, updatedTaskIds: tasks.map((task) => task.id) };
   });
 }
