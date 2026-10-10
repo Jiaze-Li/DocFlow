@@ -381,7 +381,8 @@ test('legacy whole-project task sections migrate in place without duplication', 
   const text = fs.readFileSync(note, 'utf8');
   const markers = unitMarkers('afm-workflow');
 
-  assert.equal(text.split('## afm-workflow · AFM Plotting Workflow').length - 1, 1);
+  assert.equal(text.split('## afm-workflow\n').length - 1, 1);
+  assert.doesNotMatch(text, /## afm-workflow · AFM Plotting Workflow/);
   assert.equal(text.split(markers.begin).length - 1, 1);
   assert.equal(text.split(markers.end).length - 1, 1);
   assert.match(text, /AFM current state from canonical DocFlow state\./);
