@@ -3,6 +3,7 @@ import os from 'node:os';
 import { beginRound, checkpoint, configureGlobal, gateStatus, initRepo, projectStatus, resolveRepoRoot, startTask, syncObsidian } from './core.js';
 import { catchUpAll, catchUpRepo, installSyncAgent, registerRepo, uninstallSyncAgent } from './catchup.js';
 import { doctor, formatDoctor } from './doctor.js';
+import { deployRepo } from './deploy.js';
 import { globalStatus, installGlobal } from './install.js';
 import { formatIngestSummary } from './github.js';
 import { ingestPullRequest, ingestPush } from './ingest.js';
@@ -30,7 +31,8 @@ function print(value, json = false) {
 }
 
 function help() {
-  return `DocFlow\n\nCommands:\n  init --project <name> [--summary <text>] [--note <file>]\n  configure --vault <path> [--project-folder "02 Projects"]\n  start --id <id> --title <title> --task <description> [--current <text>] [--next <text>]\n  begin [--id <task-id>]\n  checkpoint [--id <task-id>] --current <text> [--next <text>] [--status <status>] [--outcome <text>]\n  gate [--json]\n  status [--json]\n  sync [--refresh] [--json]\n  catch-up                       refresh + project every registered repo (what the LaunchAgent runs)\n  install-sync-agent [--interval <seconds>]   write the macOS LaunchAgent (does not load it)\n  uninstall-sync-agent\n  validate-message (--file <path> | --message <text>)\n  setup-repo [--action-ref <ref>]\n  ingest-github --event-name <push|pull_request> --event-path <file>\n  ingest-push --ref <refs/heads/x> --before <sha> --after <sha>\n  doctor\n  install-global\n  global-status\n\nCommon: --cwd <repo-path>`;
+  return `DocFlow\n\nCommands:\n  init --project <name> [--summary <text>] [--note <file>]\n  configure --vault <path> [--project-folder "02 Projects"]\n  start --id <id> --title <title> --task <description> [--current <text>] [--next <text>]\n  begin [--id <task-id>]\n  checkpoint [--id <task-id>] --current <text> [--next <text>] [--status <status>] [--outcome <text>]\n  gate [--json]\n  status [--json]\n  sync [--refresh] [--json]\n  catch-up                       refresh + project every registered repo (what the LaunchAgent runs)\n  install-sync-agent [--interval <seconds>]   write the macOS LaunchAgent (does not load it)\n  uninstall-sync-agent\n  validate-message (--file <path> | --message <text>)\n  setup-repo [--action-ref <ref>]
+  deploy [--action-ref <ref>] [--json]  activate and install the GitHub workflow on existing branches\n  ingest-github --event-name <push|pull_request> --event-path <file>\n  ingest-push --ref <refs/heads/x> --before <sha> --after <sha>\n  doctor\n  install-global\n  global-status\n\nCommon: --cwd <repo-path>`;
 }
 
 export async function runCli(argv = process.argv.slice(2), env = process.env) {
@@ -97,6 +99,12 @@ export async function runCli(argv = process.argv.slice(2), env = process.env) {
       const setup = setupRepo({ cwd, homeDir, actionRef: opts['action-ref'] || undefined, activate: !opts['no-activate'] });
       registerRepo({ repoRoot: setup.repoRoot, homeDir });
       print(setup, true); return 0;
+    }
+    case 'deploy': {
+      const result = deployRepo({ cwd, homeDir, actionRef: opts['action-ref'] || undefined });
+      registerRepo({ repoRoot: result.repoRoot, homeDir });
+      print(result, true);
+      return result.ok ? 0 : 1;
     }
     case 'ingest-push': {
       const result = ingestPush({
