@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T03:05:58.084Z",
+  "updatedAt": "2026-10-10T03:06:20.481Z",
   "task": {
     "id": "fix/obsidian-v1-unit-updated-at-20261010",
     "branch": "fix/obsidian-v1-unit-updated-at-20261010",
@@ -8,15 +8,26 @@
     "task": "Development branch: fix/obsidian-v1-unit-updated-at-20261010",
     "started": "2026-10-10T11:05:48+08:00",
     "status": "In progress",
-    "current": "Show durable updated time for legacy Obsidian task units",
+    "current": "Cover legacy unit timestamps, SGT and idempotent multi-unit sync",
     "next": "",
-    "history": [],
+    "history": [
+      {
+        "at": "2026-10-10T11:06:12+08:00",
+        "text": "Show durable updated time for legacy Obsidian task units"
+      }
+    ],
     "commits": [
       {
         "sha": "5269a0fdf9353f45b38e73465bca0912ddc755a9",
         "branch": "fix/obsidian-v1-unit-updated-at-20261010",
         "timestamp": "2026-10-10T11:05:48+08:00",
         "message": "Show durable updated time for legacy Obsidian task units"
+      },
+      {
+        "sha": "58f278d7e94cc6f4fa72e44341529c65402d981e",
+        "branch": "fix/obsidian-v1-unit-updated-at-20261010",
+        "timestamp": "2026-10-10T11:06:12+08:00",
+        "message": "Cover legacy unit timestamps, SGT and idempotent multi-unit sync"
       }
     ],
     "pr": null,
