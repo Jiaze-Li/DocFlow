@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T02:35:00.182Z",
+  "updatedAt": "2026-10-10T02:35:32.842Z",
   "task": {
     "id": "fix/obsidian-updated-at-from-unit-20261010",
     "branch": "fix/obsidian-updated-at-from-unit-20261010",
@@ -8,15 +8,26 @@
     "task": "Development branch: fix/obsidian-updated-at-from-unit-20261010",
     "started": "2026-10-10T10:34:51+08:00",
     "status": "In progress",
-    "current": "Show per-branch durable progress time in SGT when syncing Obsidian",
+    "current": "Test branch update times, PR events, and idempotent Obsidian sync",
     "next": "",
-    "history": [],
+    "history": [
+      {
+        "at": "2026-10-10T10:35:23+08:00",
+        "text": "Show per-branch durable progress time in SGT when syncing Obsidian"
+      }
+    ],
     "commits": [
       {
         "sha": "3fb9053ab3c8f5c530f4a3b0dcf6efbb90d1bfbb",
         "branch": "fix/obsidian-updated-at-from-unit-20261010",
         "timestamp": "2026-10-10T10:34:51+08:00",
         "message": "Show per-branch durable progress time in SGT when syncing Obsidian"
+      },
+      {
+        "sha": "6f3f0397db6f50aacdd034cbdbdc608599d3150a",
+        "branch": "fix/obsidian-updated-at-from-unit-20261010",
+        "timestamp": "2026-10-10T10:35:23+08:00",
+        "message": "Test branch update times, PR events, and idempotent Obsidian sync"
       }
     ],
     "pr": null,
