@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MANAGED_BEGIN, MANAGED_END, configureGlobal, initRepo, renderTaskUnit, startTask, syncObsidian } from '../src/core.js';
-import { AGENT_LABEL, catchUpAll, installSyncAgent, listRegisteredRepos, registerRepo, syncAgentStatus, uninstallSyncAgent } from '../src/catchup.js';
+import { AGENT_LABEL, catchUpAll, installSyncAgent, listRegisteredRepos, registerRepo, stableNodePath, syncAgentStatus, uninstallSyncAgent } from '../src/catchup.js';
 import { ingestPush } from '../src/ingest.js';
 import { setupRepo } from '../src/setup-repo.js';
 import { doctor } from '../src/doctor.js';
@@ -257,12 +257,36 @@ test('one broken repository does not stop catch-up of the others; registry is id
   assert.match(fs.readFileSync(c.notePath, 'utf8'), /Healthy repo change/);
 });
 
+test('sync agent resolves Homebrew-style stable Node symlinks only for matching executables', () => {
+  const home = tempHome();
+  const realNode = path.join(home, 'Cellar', 'node', '26.7.0', 'bin', 'node');
+  const stableLink = path.join(home, 'bin', 'node');
+  const otherNode = path.join(home, 'other', 'node');
+  fs.mkdirSync(path.dirname(realNode), { recursive: true });
+  fs.mkdirSync(path.dirname(stableLink), { recursive: true });
+  fs.mkdirSync(path.dirname(otherNode), { recursive: true });
+  fs.writeFileSync(realNode, '#!/bin/sh\\nexit 0\\n', { mode: 0o755 });
+  fs.writeFileSync(otherNode, '#!/bin/sh\\nexit 0\\n', { mode: 0o755 });
+  fs.symlinkSync(realNode, stableLink);
+
+  assert.equal(stableNodePath(realNode, [stableLink]), stableLink);
+  assert.equal(stableNodePath(realNode, [otherNode, stableLink]), stableLink, 'skip different Node installations');
+  assert.equal(stableNodePath(realNode, [otherNode]), realNode, 'fall back when no matching stable link exists');
+  assert.equal(stableNodePath(path.join(home, 'missing-node'), [stableLink]), path.join(home, 'missing-node'));
+
+  const result = installSyncAgent({ homeDir: home, nodePath: stableNodePath(realNode, [stableLink]) });
+  const plist = fs.readFileSync(result.plist, 'utf8');
+  assert.ok(plist.includes(`<string>${stableLink}</string>`));
+  assert.equal(syncAgentStatus({ homeDir: home, nodePath: stableLink }).state, 'current');
+});
+
 test('sync agent: written but never loaded, status tracks drift, doctor reports it', () => {
   const home = tempHome();
   assert.equal(syncAgentStatus({ homeDir: home }).state, 'missing');
   const res = installSyncAgent({ homeDir: home, intervalSeconds: 300 });
   const plist = fs.readFileSync(res.plist, 'utf8');
   assert.match(plist, new RegExp(`<string>${AGENT_LABEL}</string>`));
+  assert.ok(plist.includes(`<string>${stableNodePath()}</string>`), 'agent should use a stable executable path when available');
   assert.match(plist, /<string>catch-up<\/string>/);
   assert.match(plist, /<key>StartInterval<\/key><integer>300<\/integer>/);
   assert.match(res.loadCommand, /launchctl bootstrap/);
