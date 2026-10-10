@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T03:20:11.199Z",
+  "updatedAt": "2026-10-10T03:21:03.082Z",
   "task": {
     "id": "feat/one-command-deploy-20261010",
     "branch": "feat/one-command-deploy-20261010",
@@ -8,7 +8,7 @@
     "task": "Development branch: feat/one-command-deploy-20261010",
     "started": "2026-10-10T11:18:36+08:00",
     "status": "In progress",
-    "current": "Keep local branch refs in sync and avoid blocking unchanged workflows",
+    "current": "Test central workflow deployment, idempotency and safe failure modes",
     "next": "",
     "history": [
       {
@@ -22,6 +22,10 @@
       {
         "at": "2026-10-10T11:20:03+08:00",
         "text": "Document one-command deployment, safe branch rollout and blockers"
+      },
+      {
+        "at": "2026-10-10T11:20:53+08:00",
+        "text": "Keep local branch refs in sync and avoid blocking unchanged workflows"
       }
     ],
     "commits": [
@@ -48,6 +52,12 @@
         "branch": "feat/one-command-deploy-20261010",
         "timestamp": "2026-10-10T11:20:03+08:00",
         "message": "Keep local branch refs in sync and avoid blocking unchanged workflows"
+      },
+      {
+        "sha": "edc8e1657087674208ac5dfc344bc647e19a6cdb",
+        "branch": "feat/one-command-deploy-20261010",
+        "timestamp": "2026-10-10T11:20:53+08:00",
+        "message": "Test central workflow deployment, idempotency and safe failure modes"
       }
     ],
     "pr": null,
