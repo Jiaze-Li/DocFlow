@@ -1045,3 +1045,66 @@ test('explicit default branch (CI clones without origin/HEAD) is never a develop
   assert.equal(viaBase.ignored, true);
   assert.equal(loadState(repo).tasks.length, 0);
 });
+
+
+test('Obsidian Updated at tracks each durable branch unit, not sync time', () => {
+  const repo = tempGitRepo();
+  const home = tempHome();
+  const vault = path.join(home, 'Vault');
+  const projects = path.join(vault, '02 Projects');
+  fs.mkdirSync(projects, { recursive: true });
+  configureGlobal({ homeDir: home, vault, projectFolder: '02 Projects' });
+  initRepo({ cwd: repo, homeDir: home, projectName: 'TestRepo', obsidianNote: 'project - test.md' });
+  const notePath = path.join(projects, 'project - test.md');
+  const manual = '# My notes\nHand-written content stays here.\n';
+  fs.writeFileSync(notePath, manual);
+
+  const baseBranch = execFileSync('git', ['-C', repo, 'branch', '--show-current'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/clock']);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Clock work']);
+  const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  recordCommitProgress({
+    cwd: repo, homeDir: home, branch: 'feat/clock',
+    commit: { sha, timestamp: '2026-10-09T23:59:00.000Z', message: 'Clock work' },
+    now: new Date('2026-10-10T00:19:12.000Z'),
+  });
+  syncObsidian({ cwd: repo, homeDir: home });
+  const first = fs.readFileSync(notePath, 'utf8');
+  assert.ok(first.startsWith(manual));
+  assert.match(first, /\*\*Started:\*\* 2026-10-09\n\*\*Updated at:\*\* 2026-10-10 08:19 SGT/);
+  assert.equal(first.split('**Updated at:**').length - 1, 1);
+  assert.equal(loadState(repo).tasks[0].updatedAt, undefined, 'timestamp stays in durable unit metadata, not task');
+
+  const mtime = fs.statSync(notePath).mtimeMs;
+  const repeat = syncObsidian({ cwd: repo, homeDir: home });
+  assert.equal(repeat.unchanged, true);
+  assert.equal(fs.statSync(notePath).mtimeMs, mtime);
+  assert.equal(fs.readFileSync(notePath, 'utf8'), first);
+
+  recordPullRequestEvent({
+    cwd: repo, homeDir: home, branch: 'feat/clock',
+    pr: { number: 7, state: 'open', updatedAt: '2026-10-10T01:39:00.000Z' },
+    now: new Date('2026-10-10T01:40:12.000Z'),
+  });
+  syncObsidian({ cwd: repo, homeDir: home });
+  const afterPr = fs.readFileSync(notePath, 'utf8');
+  assert.match(afterPr, /\*\*PR:\*\* #7/);
+  assert.match(afterPr, /\*\*Updated at:\*\* 2026-10-10 09:40 SGT/);
+  assert.doesNotMatch(afterPr, /\*\*Updated at:\*\* 2026-10-10 08:19 SGT/);
+
+  execFileSync('git', ['-C', repo, 'checkout', '-qb', 'feat/other', baseBranch]);
+  execFileSync('git', ['-C', repo, 'commit', '--allow-empty', '-qm', 'Other branch work']);
+  const otherSha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  recordCommitProgress({
+    cwd: repo, homeDir: home, branch: 'feat/other',
+    commit: { sha: otherSha, timestamp: '2026-10-10T02:45:00.000Z', message: 'Other branch work' },
+    now: new Date('2026-10-10T02:59:30.000Z'),
+  });
+  syncObsidian({ cwd: repo, homeDir: home });
+  const finalNote = fs.readFileSync(notePath, 'utf8');
+  assert.ok(finalNote.startsWith(manual));
+  assert.match(finalNote, /\*\*Updated at:\*\* 2026-10-10 09:40 SGT/);
+  assert.match(finalNote, /\*\*Updated at:\*\* 2026-10-10 10:59 SGT/);
+  assert.equal(finalNote.split('**Updated at:**').length - 1, 2);
+});

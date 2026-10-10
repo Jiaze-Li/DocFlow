@@ -1299,7 +1299,15 @@ function displayDate(value) {
   return match ? match[1] : text;
 }
 
-export function renderTaskUnit(task) {
+// A durable unit timestamp is UTC. Singapore stays at UTC+8 year-round.
+function displayUpdatedAt(value) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return `${new Date(timestamp + 8 * 60 * 60 * 1000).toISOString().slice(0, 16).replace('T', ' ')} SGT`;
+}
+
+export function renderTaskUnit(task, updatedAt = null) {
   const normalized = validateTask(JSON.parse(JSON.stringify(task)));
   const markers = unitMarkers(normalized.id);
   // Commit-native units use a compact branch-first presentation. Keep their durable
@@ -1327,6 +1335,8 @@ export function renderTaskUnit(task) {
       `**PR:**${prLabel ? ` ${prLabel}` : ''}`,
       `**Started:** ${displayDate(normalized.started)}`,
     ];
+    const updatedLabel = displayUpdatedAt(updatedAt);
+    if (updatedLabel) lines.push(`**Updated at:** ${updatedLabel}`);
     if (normalized.completed) lines.push(`**Completed:** ${displayDate(normalized.completed)}`);
     lines.push('', '### Current', view.current || '-');
     if (view.next && view.next.trim() && view.next !== '-') lines.push('', '### Next', view.next);
@@ -1449,9 +1459,9 @@ function legacyUnitBounds(inner, taskId) {
   return { start, end };
 }
 
-export function upsertManagedUnit(existing, task) {
+export function upsertManagedUnit(existing, task, updatedAt = null) {
   const normalized = validateTask(JSON.parse(JSON.stringify(task)));
-  const unit = renderTaskUnit(normalized).trimEnd();
+  const unit = renderTaskUnit(normalized, updatedAt).trimEnd();
   const markers = unitMarkers(normalized.id);
   let text = ensureManagedContainer(existing);
   const bounds = managedBounds(text);
@@ -1597,7 +1607,12 @@ export function syncObsidian({
     }
 
     let next = ensureManagedContainer(existing);
-    for (const task of tasks) next = upsertManagedUnit(next, task);
+    for (const task of tasks) {
+      const unitPath = resolveStateUnitPath(repoRoot, task.id, exec);
+      const durableText = readStateFile(repoRoot, unitPath, exec);
+      const updatedAt = durableText == null ? null : parseDurableUnit(durableText, unitPath).updatedAt;
+      next = upsertManagedUnit(next, task, updatedAt);
+    }
 
     // Identical content is never rewritten: no new mtime, no churn for Obsidian/iCloud/Spotlight.
     const unchanged = !created && next === existing;
