@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T12:05:46.781Z",
+  "updatedAt": "2026-10-10T12:06:07.246Z",
   "task": {
     "id": "fix/legacy-unit-heading-id-only-20261010",
     "branch": "fix/legacy-unit-heading-id-only-20261010",
@@ -8,15 +8,26 @@
     "task": "Development branch: fix/legacy-unit-heading-id-only-20261010",
     "started": "2026-10-10T20:05:37+08:00",
     "status": "In progress",
-    "current": "Show only durable unit ID in legacy Obsidian headings",
+    "current": "Test compact legacy headings and unchanged Obsidian sync",
     "next": "",
-    "history": [],
+    "history": [
+      {
+        "at": "2026-10-10T20:05:59+08:00",
+        "text": "Show only durable unit ID in legacy Obsidian headings"
+      }
+    ],
     "commits": [
       {
         "sha": "e4439097633dd569aa61bd0cfa7aa2139109e4b7",
         "branch": "fix/legacy-unit-heading-id-only-20261010",
         "timestamp": "2026-10-10T20:05:37+08:00",
         "message": "Show only durable unit ID in legacy Obsidian headings"
+      },
+      {
+        "sha": "dc90add3433f49f99476e8493d14d2276a33d113",
+        "branch": "fix/legacy-unit-heading-id-only-20261010",
+        "timestamp": "2026-10-10T20:05:59+08:00",
+        "message": "Test compact legacy headings and unchanged Obsidian sync"
       }
     ],
     "pr": null,
