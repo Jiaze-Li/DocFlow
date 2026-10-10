@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T03:21:03.082Z",
+  "updatedAt": "2026-10-10T03:21:27.711Z",
   "task": {
     "id": "feat/one-command-deploy-20261010",
     "branch": "feat/one-command-deploy-20261010",
@@ -60,7 +60,14 @@
         "message": "Test central workflow deployment, idempotency and safe failure modes"
       }
     ],
-    "pr": null,
+    "pr": {
+      "number": 11,
+      "state": "open",
+      "title": "Add safe one-command DocFlow deployment for existing repositories",
+      "url": "https://github.com/Jiaze-Li/DocFlow/pull/11",
+      "merged": false,
+      "updatedAt": "2026-10-10T03:21:15Z"
+    },
     "completed": null,
     "outcome": null
   }
