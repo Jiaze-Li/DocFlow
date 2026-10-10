@@ -69,7 +69,7 @@ test('every distinct SHA is projected in order; identical subjects stay distinct
   assert.match(block, /### Current\nAdd upload retry \(`[0-9a-f]{7}`/);
   assert.ok(block.includes(`\`${shas[0].slice(0, 7)}\``) && block.includes(`\`${shas[1].slice(0, 7)}\``) && block.includes(`\`${shas[2].slice(0, 7)}\``));
   const historyOrder = block.split('### History')[1];
-  assert.ok(historyOrder.indexOf(shas[0].slice(0, 7)) < historyOrder.indexOf(shas[1].slice(0, 7)));
+  assert.ok(historyOrder.indexOf(shas[1].slice(0, 7)) < historyOrder.indexOf(shas[0].slice(0, 7)), 'most recent previous commit comes first');
   assert.doesNotMatch(note, /Long body that must never reach Obsidian/);
   assert.doesNotMatch(block, /### Next/);
   assert.match(block, /\*\*PR:\*\*\n/);
@@ -106,6 +106,41 @@ test('branch presentation: empty PR line, Current then Next then History, PR mer
   const firstOnly = renderTaskUnit({ ...base, next: '', commits: base.commits.slice(0, 1) });
   assert.doesNotMatch(firstOnly, /### History/);
   assert.doesNotMatch(firstOnly, /### Next/);
+});
+
+test('History is newest first for legacy and mixed commit-native units, without changing durable order', () => {
+  const legacy = {
+    id: 'afm-workflow', title: 'AFM Plotting Workflow', task: 'AFM plots',
+    started: '2026-09-20T00:00:00Z', status: 'In progress',
+    current: 'Current work', next: 'More work', completed: null, outcome: null,
+    history: [
+      { at: '2026-09-20T00:00:00Z', text: 'First history' },
+      { at: '2026-09-21T00:00:00Z', text: 'Second history' },
+      { at: '2026-09-22T00:00:00Z', text: 'Third history' },
+    ],
+  };
+  const original = JSON.stringify(legacy);
+  const projectedLegacy = renderTaskUnit(legacy);
+  const legacyHistory = projectedLegacy.split('**History**\n')[1].split('\n').filter((line) => line.startsWith('- '));
+  assert.deepEqual(legacyHistory, ['- Third history', '- Second history', '- First history']);
+  assert.ok(projectedLegacy.includes('**Current**\nCurrent work'));
+
+  const branch = { ...legacy, id: 'feat/mixed', branch: 'feat/mixed',
+    commits: [
+      { sha: 'a'.repeat(40), branch: 'feat/mixed', timestamp: '2026-10-01T00:00:00Z', message: 'First commit' },
+      { sha: 'b'.repeat(40), branch: 'feat/mixed', timestamp: '2026-10-02T00:00:00Z', message: 'Second commit' },
+      { sha: 'c'.repeat(40), branch: 'feat/mixed', timestamp: '2026-10-03T00:00:00Z', message: 'Third commit' },
+    ],
+  };
+  const originalBranch = JSON.stringify(branch);
+  const projectedBranch = renderTaskUnit(branch);
+  assert.ok(projectedBranch.includes('### Current\nThird commit ('));
+  const branchHistory = projectedBranch.split('### History\n')[1].split('\n').filter((line) => line.startsWith('- '));
+  assert.deepEqual(branchHistory.map((line) => line.split(' (')[0]), [
+    '- Second commit', '- First commit', '- Third history', '- Second history', '- First history',
+  ]);
+  assert.equal(JSON.stringify(legacy), original, 'legacy state order remains unchanged');
+  assert.equal(JSON.stringify(branch), originalBranch, 'commit-native state order remains unchanged');
 });
 
 test('repeated sync is byte-idempotent and manual content outside the managed block is preserved', () => {

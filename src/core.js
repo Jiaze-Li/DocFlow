@@ -1342,7 +1342,7 @@ export function renderTaskUnit(task, updatedAt = null) {
     if (view.next && view.next.trim() && view.next !== '-') lines.push('', '### Next', view.next);
     if (view.history.length) {
       lines.push('', '### History');
-      for (const text of view.history) lines.push(`- ${text}`);
+      for (const text of [...view.history].reverse()) lines.push(`- ${text}`);
     }
     lines.push(markers.end);
     return `${lines.join('\n')}\n`;
@@ -1368,7 +1368,7 @@ export function renderTaskUnit(task, updatedAt = null) {
   lines.push('**Next**', view.next, '');
   lines.push('**History**');
   if (view.history.length) {
-    for (const text of view.history) lines.push(`- ${text}`);
+    for (const text of [...view.history].reverse()) lines.push(`- ${text}`);
   } else {
     lines.push('-');
   }
