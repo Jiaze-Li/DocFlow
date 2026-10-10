@@ -39,13 +39,13 @@ test('Obsidian sync preserves manual project content and updates only one manage
   assert.match(text, /Manual content stays here/);
   assert.equal(text.split(MANAGED_BEGIN).length - 1, 1);
   assert.equal(text.split(MANAGED_END).length - 1, 1);
-  assert.match(text, /^## 5\.3\.8$/m);
+  assert.match(text, /^## Branch: 5\.3\.8$/m);
   assert.doesNotMatch(text, /5\.3\.8 · AFM plotting/);
   assert.match(text, /UI first revision is complete/);
   assert.match(text, /- First version plots data\./);
 });
 
-test('legacy branch-named unit heading shows the ID only and leaves its title in durable state', () => {
+test('legacy unit heading uses Branch prefix without repeating stored title', () => {
   const repo = tempGitRepo();
   const home = tempHome();
   const vault = path.join(home, 'PhD');
@@ -66,7 +66,7 @@ test('legacy branch-named unit heading shows the ID only and leaves its title in
   assert.equal(first.unchanged, false);
   const text = fs.readFileSync(notePath, 'utf8');
   assert.ok(text.startsWith(manual));
-  assert.match(text, /^## afm-workflow$/m);
+  assert.match(text, /^## Branch: afm-workflow$/m);
   assert.doesNotMatch(text, /## afm-workflow · AFM Plotting Workflow/);
   assert.match(text, /\*\*Current\*\*\nFirst version works/);
   assert.match(text, /\*\*Next\*\*\nRefine controls/);
@@ -381,7 +381,7 @@ test('legacy whole-project task sections migrate in place without duplication', 
   const text = fs.readFileSync(note, 'utf8');
   const markers = unitMarkers('afm-workflow');
 
-  assert.equal(text.split('## afm-workflow\n').length - 1, 1);
+  assert.equal(text.split('## Branch: afm-workflow\n').length - 1, 1);
   assert.doesNotMatch(text, /## afm-workflow · AFM Plotting Workflow/);
   assert.equal(text.split(markers.begin).length - 1, 1);
   assert.equal(text.split(markers.end).length - 1, 1);
