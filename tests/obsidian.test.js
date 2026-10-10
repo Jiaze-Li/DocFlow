@@ -39,9 +39,45 @@ test('Obsidian sync preserves manual project content and updates only one manage
   assert.match(text, /Manual content stays here/);
   assert.equal(text.split(MANAGED_BEGIN).length - 1, 1);
   assert.equal(text.split(MANAGED_END).length - 1, 1);
-  assert.match(text, /## 5\.3\.8 · AFM plotting/);
+  assert.match(text, /^## Branch: 5\.3\.8$/m);
+  assert.doesNotMatch(text, /5\.3\.8 · AFM plotting/);
   assert.match(text, /UI first revision is complete/);
   assert.match(text, /- First version plots data\./);
+});
+
+test('legacy unit heading uses Branch prefix without repeating stored title', () => {
+  const repo = tempGitRepo();
+  const home = tempHome();
+  const vault = path.join(home, 'PhD');
+  configureGlobal({ homeDir: home, vault, projectFolder: '02 Projects' });
+  initRepo({ cwd: repo, homeDir: home, projectName: 'SpinLab', obsidianNote: 'project - spinlab.md' });
+
+  const notePath = path.join(vault, '02 Projects', 'project - spinlab.md');
+  const manual = '## Project definition\nThese notes belong to the user.\n';
+  fs.mkdirSync(path.dirname(notePath), { recursive: true });
+  fs.writeFileSync(notePath, manual);
+  startTask({
+    cwd: repo, homeDir: home, id: 'afm-workflow', title: 'AFM Plotting Workflow',
+    task: 'Add plotting', current: 'First version works', next: 'Refine controls',
+    now: new Date('2026-09-20T03:06:17.792Z'),
+  });
+
+  const first = syncObsidian({ cwd: repo, homeDir: home });
+  assert.equal(first.unchanged, false);
+  const text = fs.readFileSync(notePath, 'utf8');
+  assert.ok(text.startsWith(manual));
+  assert.match(text, /^## Branch: afm-workflow$/m);
+  assert.doesNotMatch(text, /## afm-workflow · AFM Plotting Workflow/);
+  assert.match(text, /\*\*Current\*\*\nFirst version works/);
+  assert.match(text, /\*\*Next\*\*\nRefine controls/);
+  assert.equal(text.split(unitMarkers('afm-workflow').begin).length - 1, 1);
+  assert.equal(loadState(repo).tasks[0].title, 'AFM Plotting Workflow');
+
+  const mtime = fs.statSync(notePath).mtimeMs;
+  const second = syncObsidian({ cwd: repo, homeDir: home });
+  assert.equal(second.unchanged, true);
+  assert.equal(fs.statSync(notePath).mtimeMs, mtime);
+  assert.equal(fs.readFileSync(notePath, 'utf8'), text);
 });
 
 test('Obsidian projection shows compact lifecycle dates while durable state keeps ISO timestamps', () => {
@@ -345,7 +381,8 @@ test('legacy whole-project task sections migrate in place without duplication', 
   const text = fs.readFileSync(note, 'utf8');
   const markers = unitMarkers('afm-workflow');
 
-  assert.equal(text.split('## afm-workflow · AFM Plotting Workflow').length - 1, 1);
+  assert.equal(text.split('## Branch: afm-workflow\n').length - 1, 1);
+  assert.doesNotMatch(text, /## afm-workflow · AFM Plotting Workflow/);
   assert.equal(text.split(markers.begin).length - 1, 1);
   assert.equal(text.split(markers.end).length - 1, 1);
   assert.match(text, /AFM current state from canonical DocFlow state\./);

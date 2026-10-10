@@ -1348,7 +1348,7 @@ export function renderTaskUnit(task, updatedAt = null) {
     return `${lines.join('\n')}\n`;
   }
 
-  const lines = [markers.begin, `## ${normalized.id} · ${normalized.title}`, ''];
+  const lines = [markers.begin, `## Branch: ${normalized.id}`, ''];
   lines.push(`**Task:** ${normalized.task}`);
   lines.push(`**Started:** ${displayDate(normalized.started)}`);
   const updatedLabel = displayUpdatedAt(updatedAt);
