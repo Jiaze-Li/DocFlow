@@ -80,7 +80,23 @@ function xml(value) {
   return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export function renderAgentPlist({ homeDir = os.homedir(), cliPath = DEFAULT_CLI, nodePath = process.execPath, intervalSeconds = DEFAULT_INTERVAL_SECONDS } = {}) {
+// Prefer a version-independent Homebrew entrypoint, but only when it resolves to
+// the exact Node executable running DocFlow. Other Node installations keep their
+// existing behavior; a different Homebrew Node is never substituted silently.
+export function stableNodePath(executable = process.execPath, candidates = ['/opt/homebrew/bin/node', '/usr/local/bin/node']) {
+  let resolved;
+  try { resolved = fs.realpathSync(executable); } catch { return executable; }
+  for (const candidate of candidates) {
+    try {
+      if (fs.realpathSync(candidate) !== resolved) continue;
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch { /* Missing, inaccessible or different Node: try next candidate. */ }
+  }
+  return executable;
+}
+
+export function renderAgentPlist({ homeDir = os.homedir(), cliPath = DEFAULT_CLI, nodePath = stableNodePath(), intervalSeconds = DEFAULT_INTERVAL_SECONDS } = {}) {
   const logDir = path.join(homeDir, '.docflow', 'logs');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -105,7 +121,7 @@ export function renderAgentPlist({ homeDir = os.homedir(), cliPath = DEFAULT_CLI
 }
 
 /** Writes the LaunchAgent definition only. Loading it is a separate, explicit step. */
-export function installSyncAgent({ homeDir = os.homedir(), cliPath = DEFAULT_CLI, nodePath = process.execPath, intervalSeconds = DEFAULT_INTERVAL_SECONDS } = {}) {
+export function installSyncAgent({ homeDir = os.homedir(), cliPath = DEFAULT_CLI, nodePath = stableNodePath(), intervalSeconds = DEFAULT_INTERVAL_SECONDS } = {}) {
   const interval = Math.floor(Number(intervalSeconds));
   if (!Number.isFinite(interval) || interval < 60 || interval > 86400) throw new Error('interval must be between 60 and 86400 seconds');
   const file = agentPlistPath(homeDir);
@@ -121,7 +137,7 @@ export function uninstallSyncAgent({ homeDir = os.homedir() } = {}) {
   return { plist: file, removed: existed, unloadCommand: `launchctl bootout gui/$(id -u)/${AGENT_LABEL}` };
 }
 
-export function syncAgentStatus({ homeDir = os.homedir(), cliPath = DEFAULT_CLI, nodePath = process.execPath } = {}) {
+export function syncAgentStatus({ homeDir = os.homedir(), cliPath = DEFAULT_CLI, nodePath = stableNodePath() } = {}) {
   const file = agentPlistPath(homeDir);
   if (!fs.existsSync(file)) return { state: 'missing', path: file };
   const current = fs.readFileSync(file, 'utf8');
