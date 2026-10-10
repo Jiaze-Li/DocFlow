@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-10-10T12:43:49.224Z",
+  "task": {
+    "id": "fix/stable-node-path-sync-agent-20261010",
+    "branch": "fix/stable-node-path-sync-agent-20261010",
+    "title": "fix/stable-node-path-sync-agent-20261010",
+    "task": "Development branch: fix/stable-node-path-sync-agent-20261010",
+    "started": "2026-10-10T20:43:39+08:00",
+    "status": "In progress",
+    "current": "Use stable Homebrew Node launcher for sync-agent when it matches active Node",
+    "next": "",
+    "history": [],
+    "commits": [
+      {
+        "sha": "a4d8be8be251fe9589cb1bcbb6d13805c8f53808",
+        "branch": "fix/stable-node-path-sync-agent-20261010",
+        "timestamp": "2026-10-10T20:43:39+08:00",
+        "message": "Use stable Homebrew Node launcher for sync-agent when it matches active Node"
+      }
+    ],
+    "pr": null,
+    "completed": null,
+    "outcome": null
+  }
+}
