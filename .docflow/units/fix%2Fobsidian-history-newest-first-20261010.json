@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T10:13:57.838Z",
+  "updatedAt": "2026-10-10T10:14:22.794Z",
   "task": {
     "id": "fix/obsidian-history-newest-first-20261010",
     "branch": "fix/obsidian-history-newest-first-20261010",
@@ -8,15 +8,26 @@
     "task": "Development branch: fix/obsidian-history-newest-first-20261010",
     "started": "2026-10-10T18:13:50+08:00",
     "status": "In progress",
-    "current": "Render Obsidian History newest first without changing stored order",
+    "current": "Test reverse-chronological History for legacy and commit-native units",
     "next": "",
-    "history": [],
+    "history": [
+      {
+        "at": "2026-10-10T18:14:15+08:00",
+        "text": "Render Obsidian History newest first without changing stored order"
+      }
+    ],
     "commits": [
       {
         "sha": "075d073eebfee779ac825bf1c132101cbf2570be",
         "branch": "fix/obsidian-history-newest-first-20261010",
         "timestamp": "2026-10-10T18:13:50+08:00",
         "message": "Render Obsidian History newest first without changing stored order"
+      },
+      {
+        "sha": "6e814a699a714218fffcd4eaa47b7a2a8df9225f",
+        "branch": "fix/obsidian-history-newest-first-20261010",
+        "timestamp": "2026-10-10T18:14:15+08:00",
+        "message": "Test reverse-chronological History for legacy and commit-native units"
       }
     ],
     "pr": null,
