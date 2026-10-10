@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T03:19:21.697Z",
+  "updatedAt": "2026-10-10T03:20:11.199Z",
   "task": {
     "id": "feat/one-command-deploy-20261010",
     "branch": "feat/one-command-deploy-20261010",
@@ -8,7 +8,7 @@
     "task": "Development branch: feat/one-command-deploy-20261010",
     "started": "2026-10-10T11:18:36+08:00",
     "status": "In progress",
-    "current": "Document one-command deployment, safe branch rollout and blockers",
+    "current": "Keep local branch refs in sync and avoid blocking unchanged workflows",
     "next": "",
     "history": [
       {
@@ -18,6 +18,10 @@
       {
         "at": "2026-10-10T11:19:12+08:00",
         "text": "Expose docflow deploy command with explicit partial-failure status"
+      },
+      {
+        "at": "2026-10-10T11:20:03+08:00",
+        "text": "Document one-command deployment, safe branch rollout and blockers"
       }
     ],
     "commits": [
@@ -38,6 +42,12 @@
         "branch": "feat/one-command-deploy-20261010",
         "timestamp": "2026-10-10T11:19:12+08:00",
         "message": "Document one-command deployment, safe branch rollout and blockers"
+      },
+      {
+        "sha": "647f01b2d1ab5cd3aa813fbdb3c218c8d3a744c6",
+        "branch": "feat/one-command-deploy-20261010",
+        "timestamp": "2026-10-10T11:20:03+08:00",
+        "message": "Keep local branch refs in sync and avoid blocking unchanged workflows"
       }
     ],
     "pr": null,
