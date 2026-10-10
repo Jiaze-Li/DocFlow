@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-10-10T02:35:00.182Z",
+  "task": {
+    "id": "fix/obsidian-updated-at-from-unit-20261010",
+    "branch": "fix/obsidian-updated-at-from-unit-20261010",
+    "title": "fix/obsidian-updated-at-from-unit-20261010",
+    "task": "Development branch: fix/obsidian-updated-at-from-unit-20261010",
+    "started": "2026-10-10T10:34:51+08:00",
+    "status": "In progress",
+    "current": "Show per-branch durable progress time in SGT when syncing Obsidian",
+    "next": "",
+    "history": [],
+    "commits": [
+      {
+        "sha": "3fb9053ab3c8f5c530f4a3b0dcf6efbb90d1bfbb",
+        "branch": "fix/obsidian-updated-at-from-unit-20261010",
+        "timestamp": "2026-10-10T10:34:51+08:00",
+        "message": "Show per-branch durable progress time in SGT when syncing Obsidian"
+      }
+    ],
+    "pr": null,
+    "completed": null,
+    "outcome": null
+  }
+}
