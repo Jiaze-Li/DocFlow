@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T12:44:13.565Z",
+  "updatedAt": "2026-10-10T12:44:28.927Z",
   "task": {
     "id": "fix/stable-node-path-sync-agent-20261010",
     "branch": "fix/stable-node-path-sync-agent-20261010",
@@ -8,12 +8,16 @@
     "task": "Development branch: fix/stable-node-path-sync-agent-20261010",
     "started": "2026-10-10T20:43:39+08:00",
     "status": "In progress",
-    "current": "Test matching Node symlink preference and safe fallback",
+    "current": "Use simple fixtures for executable symlink tests",
     "next": "",
     "history": [
       {
         "at": "2026-10-10T20:44:04+08:00",
         "text": "Use stable Homebrew Node launcher for sync-agent when it matches active Node"
+      },
+      {
+        "at": "2026-10-10T20:44:20+08:00",
+        "text": "Test matching Node symlink preference and safe fallback"
       }
     ],
     "commits": [
@@ -28,6 +32,12 @@
         "branch": "fix/stable-node-path-sync-agent-20261010",
         "timestamp": "2026-10-10T20:44:04+08:00",
         "message": "Test matching Node symlink preference and safe fallback"
+      },
+      {
+        "sha": "da67fca64e3fcb7aaefcfdee2bbb198b8b77d784",
+        "branch": "fix/stable-node-path-sync-agent-20261010",
+        "timestamp": "2026-10-10T20:44:20+08:00",
+        "message": "Use simple fixtures for executable symlink tests"
       }
     ],
     "pr": null,
