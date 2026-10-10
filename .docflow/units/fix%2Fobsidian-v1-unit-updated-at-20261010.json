@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T03:06:35.761Z",
+  "updatedAt": "2026-10-10T03:15:29.512Z",
   "task": {
     "id": "fix/obsidian-v1-unit-updated-at-20261010",
     "branch": "fix/obsidian-v1-unit-updated-at-20261010",
     "title": "fix/obsidian-v1-unit-updated-at-20261010",
     "task": "Development branch: fix/obsidian-v1-unit-updated-at-20261010",
     "started": "2026-10-10T11:05:48+08:00",
-    "status": "In progress",
+    "status": "Completed",
     "current": "Cover legacy unit timestamps, SGT and idempotent multi-unit sync",
     "next": "",
     "history": [
@@ -32,13 +32,15 @@
     ],
     "pr": {
       "number": 10,
-      "state": "open",
+      "state": "closed",
       "title": "Obsidian: show Updated at for legacy durable units",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/10",
-      "merged": false,
-      "updatedAt": "2026-10-10T03:06:26Z"
+      "merged": true,
+      "mergedAt": "2026-10-10T03:15:19Z",
+      "closedAt": "2026-10-10T03:15:19Z",
+      "updatedAt": "2026-10-10T03:15:19Z"
     },
-    "completed": null,
-    "outcome": null
+    "completed": "2026-10-10T03:15:19Z",
+    "outcome": "Merged"
   }
 }
