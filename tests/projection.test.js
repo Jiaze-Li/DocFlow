@@ -265,8 +265,8 @@ test('sync agent resolves Homebrew-style stable Node symlinks only for matching 
   fs.mkdirSync(path.dirname(realNode), { recursive: true });
   fs.mkdirSync(path.dirname(stableLink), { recursive: true });
   fs.mkdirSync(path.dirname(otherNode), { recursive: true });
-  fs.writeFileSync(realNode, '#!/bin/sh\\nexit 0\\n', { mode: 0o755 });
-  fs.writeFileSync(otherNode, '#!/bin/sh\\nexit 0\\n', { mode: 0o755 });
+  fs.writeFileSync(realNode, 'fake node binary', { mode: 0o755 });
+  fs.writeFileSync(otherNode, 'different fake node binary', { mode: 0o755 });
   fs.symlinkSync(realNode, stableLink);
 
   assert.equal(stableNodePath(realNode, [stableLink]), stableLink);
