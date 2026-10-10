@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T12:11:47.716Z",
+  "updatedAt": "2026-10-10T12:11:51.808Z",
   "task": {
     "id": "fix/legacy-unit-heading-id-only-20261010",
     "branch": "fix/legacy-unit-heading-id-only-20261010",
@@ -66,7 +66,7 @@
       "title": "Obsidian: remove duplicate titles from legacy unit headings",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/13",
       "merged": false,
-      "updatedAt": "2026-10-10T12:07:31Z"
+      "updatedAt": "2026-10-10T12:11:41Z"
     },
     "completed": null,
     "outcome": null
