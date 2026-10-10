@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T10:14:22.794Z",
+  "updatedAt": "2026-10-10T10:15:10.705Z",
   "task": {
     "id": "fix/obsidian-history-newest-first-20261010",
     "branch": "fix/obsidian-history-newest-first-20261010",
@@ -8,12 +8,16 @@
     "task": "Development branch: fix/obsidian-history-newest-first-20261010",
     "started": "2026-10-10T18:13:50+08:00",
     "status": "In progress",
-    "current": "Test reverse-chronological History for legacy and commit-native units",
+    "current": "Keep history ordering assertions clear and literal",
     "next": "",
     "history": [
       {
         "at": "2026-10-10T18:14:15+08:00",
         "text": "Render Obsidian History newest first without changing stored order"
+      },
+      {
+        "at": "2026-10-10T18:15:02+08:00",
+        "text": "Test reverse-chronological History for legacy and commit-native units"
       }
     ],
     "commits": [
@@ -28,6 +32,12 @@
         "branch": "fix/obsidian-history-newest-first-20261010",
         "timestamp": "2026-10-10T18:14:15+08:00",
         "message": "Test reverse-chronological History for legacy and commit-native units"
+      },
+      {
+        "sha": "03d4a1685b9cfeed5bec6c88c37b2c8f9175ac99",
+        "branch": "fix/obsidian-history-newest-first-20261010",
+        "timestamp": "2026-10-10T18:15:02+08:00",
+        "message": "Keep history ordering assertions clear and literal"
       }
     ],
     "pr": null,
