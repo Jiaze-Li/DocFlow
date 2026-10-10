@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T12:06:23.395Z",
+  "updatedAt": "2026-10-10T12:07:37.409Z",
   "task": {
     "id": "fix/legacy-unit-heading-id-only-20261010",
     "branch": "fix/legacy-unit-heading-id-only-20261010",
@@ -8,12 +8,16 @@
     "task": "Development branch: fix/legacy-unit-heading-id-only-20261010",
     "started": "2026-10-10T20:05:37+08:00",
     "status": "In progress",
-    "current": "Test compact legacy headings and unchanged Obsidian sync",
+    "current": "Expect compact heading when migrating unmarked legacy sections",
     "next": "",
     "history": [
       {
         "at": "2026-10-10T20:05:59+08:00",
         "text": "Show only durable unit ID in legacy Obsidian headings"
+      },
+      {
+        "at": "2026-10-10T20:07:29+08:00",
+        "text": "Test compact legacy headings and unchanged Obsidian sync"
       }
     ],
     "commits": [
@@ -28,6 +32,12 @@
         "branch": "fix/legacy-unit-heading-id-only-20261010",
         "timestamp": "2026-10-10T20:05:59+08:00",
         "message": "Test compact legacy headings and unchanged Obsidian sync"
+      },
+      {
+        "sha": "e38a01b54f342d6ccbf6758c240912a43c6aab0f",
+        "branch": "fix/legacy-unit-heading-id-only-20261010",
+        "timestamp": "2026-10-10T20:07:29+08:00",
+        "message": "Expect compact heading when migrating unmarked legacy sections"
       }
     ],
     "pr": {
