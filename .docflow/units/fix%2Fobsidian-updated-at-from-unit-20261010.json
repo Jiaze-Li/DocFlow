@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T02:35:32.842Z",
+  "updatedAt": "2026-10-10T02:35:56.925Z",
   "task": {
     "id": "fix/obsidian-updated-at-from-unit-20261010",
     "branch": "fix/obsidian-updated-at-from-unit-20261010",
@@ -30,7 +30,14 @@
         "message": "Test branch update times, PR events, and idempotent Obsidian sync"
       }
     ],
-    "pr": null,
+    "pr": {
+      "number": 9,
+      "state": "open",
+      "title": "Obsidian: show each branch's last durable update time (SGT)",
+      "url": "https://github.com/Jiaze-Li/DocFlow/pull/9",
+      "merged": false,
+      "updatedAt": "2026-10-10T02:35:48Z"
+    },
     "completed": null,
     "outcome": null
   }
