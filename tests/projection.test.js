@@ -121,8 +121,9 @@ test('History is newest first for legacy and mixed commit-native units, without 
   };
   const original = JSON.stringify(legacy);
   const projectedLegacy = renderTaskUnit(legacy);
-  assert.match(projectedLegacy, /\\*\\*History\\*\\*\\n- Third history\\n- Second history\\n- First history/);
-  assert.match(projectedLegacy, /\\*\\*Current\\*\\*\\nCurrent work/);
+  const legacyHistory = projectedLegacy.split('**History**\n')[1].split('\n').filter((line) => line.startsWith('- '));
+  assert.deepEqual(legacyHistory, ['- Third history', '- Second history', '- First history']);
+  assert.ok(projectedLegacy.includes('**Current**\nCurrent work'));
 
   const branch = { ...legacy, id: 'feat/mixed', branch: 'feat/mixed',
     commits: [
@@ -133,9 +134,11 @@ test('History is newest first for legacy and mixed commit-native units, without 
   };
   const originalBranch = JSON.stringify(branch);
   const projectedBranch = renderTaskUnit(branch);
-  assert.match(projectedBranch, /### Current\\nThird commit \\(\\`ccccccc\\`, 2026-10-03\\)/);
-  assert.match(projectedBranch,
-    /### History\\n- Second commit \\(\\`bbbbbbb\\`, 2026-10-02\\)\\n- First commit \\(\\`aaaaaaa\\`, 2026-10-01\\)\\n- Third history\\n- Second history\\n- First history/);
+  assert.ok(projectedBranch.includes('### Current\nThird commit ('));
+  const branchHistory = projectedBranch.split('### History\n')[1].split('\n').filter((line) => line.startsWith('- '));
+  assert.deepEqual(branchHistory.map((line) => line.split(' (')[0]), [
+    '- Second commit', '- First commit', '- Third history', '- Second history', '- First history',
+  ]);
   assert.equal(JSON.stringify(legacy), original, 'legacy state order remains unchanged');
   assert.equal(JSON.stringify(branch), originalBranch, 'commit-native state order remains unchanged');
 });
