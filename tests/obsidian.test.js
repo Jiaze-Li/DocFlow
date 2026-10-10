@@ -70,7 +70,7 @@ test('Obsidian projection shows compact lifecycle dates while durable state keep
   });
 
   const note = fs.readFileSync(path.join(vault, '02 Projects', 'project - spinlab.md'), 'utf8');
-  assert.match(note, /\*\*Started:\*\* 2026-09-20/);
+  assert.match(note, /\*\*Started:\*\* 2026-09-20\n\*\*Updated at:\*\* 2026-09-21 23:41 SGT/);
   assert.match(note, /\*\*Completed:\*\* 2026-09-21/);
   assert.doesNotMatch(note, /2026-09-20T03:06:20\.245Z/);
   assert.doesNotMatch(note, /2026-09-21T15:41:08\.000Z/);
@@ -351,4 +351,50 @@ test('legacy whole-project task sections migrate in place without duplication', 
   assert.match(text, /AFM current state from canonical DocFlow state\./);
   assert.doesNotMatch(text, /Legacy stale current\./);
   assert.match(text, /Manual content stays\./);
+});
+
+
+test('legacy branch-like units show their own durable time without rewriting unchanged notes', () => {
+  const repo = tempGitRepo();
+  const home = tempHome();
+  const vault = path.join(home, 'Vault');
+  configureGlobal({ homeDir: home, vault, projectFolder: '02 Projects' });
+  initRepo({ cwd: repo, homeDir: home, projectName: 'SpinLab', obsidianNote: 'project - spinlab.md' });
+  const notePath = path.join(vault, '02 Projects', 'project - spinlab.md');
+  const manual = '# My manual project notes\nDo not modify this content.\n';
+  fs.mkdirSync(path.dirname(notePath), { recursive: true });
+  fs.writeFileSync(notePath, manual);
+
+  startTask({
+    cwd: repo, homeDir: home, id: 'afm-workflow', title: 'AFM Plotting Workflow',
+    task: 'Add AFM workflow', current: 'AFM controls ready',
+    now: new Date('2026-09-24T15:57:48.830Z'),
+  });
+  startTask({
+    cwd: repo, homeDir: home, id: 'v5.3.8', title: '3ω Scaling vs Angle',
+    task: 'Analyze angle scaling', current: 'Angle selection ready',
+    now: new Date('2026-09-20T03:06:31.308Z'),
+  });
+
+  const initial = syncObsidian({ cwd: repo, homeDir: home });
+  assert.equal(initial.unchanged, false);
+  const before = fs.readFileSync(notePath, 'utf8');
+  assert.ok(before.startsWith(manual));
+  assert.match(unitText(before, 'afm-workflow'), /\*\*Started:\*\* 2026-09-24\n\*\*Updated at:\*\* 2026-09-24 23:57 SGT\n\*\*Status:\*\*/);
+  assert.match(unitText(before, 'v5.3.8'), /\*\*Updated at:\*\* 2026-09-20 11:06 SGT/);
+  assert.match(before, /\*\*Current\*\*\nAFM controls ready/);
+
+  const originalMtime = fs.statSync(notePath).mtimeMs;
+  assert.equal(syncObsidian({ cwd: repo, homeDir: home }).unchanged, true);
+  assert.equal(fs.readFileSync(notePath, 'utf8'), before);
+  assert.equal(fs.statSync(notePath).mtimeMs, originalMtime);
+
+  checkpoint({
+    cwd: repo, homeDir: home, id: 'afm-workflow', current: 'AFM rendering complete',
+    now: new Date('2026-10-10T00:19:00.000Z'),
+  });
+  const after = fs.readFileSync(notePath, 'utf8');
+  assert.ok(after.startsWith(manual));
+  assert.match(unitText(after, 'afm-workflow'), /\*\*Updated at:\*\* 2026-10-10 08:19 SGT/);
+  assert.equal(unitText(after, 'v5.3.8'), unitText(before, 'v5.3.8'));
 });

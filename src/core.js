@@ -1351,6 +1351,8 @@ export function renderTaskUnit(task, updatedAt = null) {
   const lines = [markers.begin, `## ${normalized.id} · ${normalized.title}`, ''];
   lines.push(`**Task:** ${normalized.task}`);
   lines.push(`**Started:** ${displayDate(normalized.started)}`);
+  const updatedLabel = displayUpdatedAt(updatedAt);
+  if (updatedLabel) lines.push(`**Updated at:** ${updatedLabel}`);
   lines.push(`**Status:** ${normalized.status}`);
   lines.push('');
   // Commit-native units (v2) are projected from commits[] (identity = SHA); v1 units from
