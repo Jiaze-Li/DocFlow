@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-10-10T03:18:44.613Z",
+  "task": {
+    "id": "feat/one-command-deploy-20261010",
+    "branch": "feat/one-command-deploy-20261010",
+    "title": "feat/one-command-deploy-20261010",
+    "task": "Development branch: feat/one-command-deploy-20261010",
+    "started": "2026-10-10T11:18:36+08:00",
+    "status": "In progress",
+    "current": "Add safe one-command deployment of central DocFlow workflow",
+    "next": "",
+    "history": [],
+    "commits": [
+      {
+        "sha": "4440cc274a48f79ad47f3f69cd63b2d771ff07f8",
+        "branch": "feat/one-command-deploy-20261010",
+        "timestamp": "2026-10-10T11:18:36+08:00",
+        "message": "Add safe one-command deployment of central DocFlow workflow"
+      }
+    ],
+    "pr": null,
+    "completed": null,
+    "outcome": null
+  }
+}
