@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T12:11:46.630Z",
+  "updatedAt": "2026-10-10T12:11:47.716Z",
   "task": {
     "id": "fix/legacy-unit-heading-id-only-20261010",
     "branch": "fix/legacy-unit-heading-id-only-20261010",
@@ -8,7 +8,7 @@
     "task": "Development branch: fix/legacy-unit-heading-id-only-20261010",
     "started": "2026-10-10T20:05:37+08:00",
     "status": "In progress",
-    "current": "Render legacy unit headings as Branch consistently",
+    "current": "Expect Branch headings for legacy Obsidian units",
     "next": "",
     "history": [
       {
@@ -22,6 +22,10 @@
       {
         "at": "2026-10-10T20:11:37+08:00",
         "text": "Expect compact heading when migrating unmarked legacy sections"
+      },
+      {
+        "at": "2026-10-10T20:11:39+08:00",
+        "text": "Render legacy unit headings as Branch consistently"
       }
     ],
     "commits": [
@@ -48,6 +52,12 @@
         "branch": "fix/legacy-unit-heading-id-only-20261010",
         "timestamp": "2026-10-10T20:11:37+08:00",
         "message": "Render legacy unit headings as Branch consistently"
+      },
+      {
+        "sha": "0185b321ac392e5f90f784e745718c84396c8264",
+        "branch": "fix/legacy-unit-heading-id-only-20261010",
+        "timestamp": "2026-10-10T20:11:39+08:00",
+        "message": "Expect Branch headings for legacy Obsidian units"
       }
     ],
     "pr": {
