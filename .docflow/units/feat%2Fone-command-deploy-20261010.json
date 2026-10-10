@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T03:19:04.236Z",
+  "updatedAt": "2026-10-10T03:19:21.697Z",
   "task": {
     "id": "feat/one-command-deploy-20261010",
     "branch": "feat/one-command-deploy-20261010",
@@ -8,12 +8,16 @@
     "task": "Development branch: feat/one-command-deploy-20261010",
     "started": "2026-10-10T11:18:36+08:00",
     "status": "In progress",
-    "current": "Expose docflow deploy command with explicit partial-failure status",
+    "current": "Document one-command deployment, safe branch rollout and blockers",
     "next": "",
     "history": [
       {
         "at": "2026-10-10T11:18:55+08:00",
         "text": "Add safe one-command deployment of central DocFlow workflow"
+      },
+      {
+        "at": "2026-10-10T11:19:12+08:00",
+        "text": "Expose docflow deploy command with explicit partial-failure status"
       }
     ],
     "commits": [
@@ -28,6 +32,12 @@
         "branch": "feat/one-command-deploy-20261010",
         "timestamp": "2026-10-10T11:18:55+08:00",
         "message": "Expose docflow deploy command with explicit partial-failure status"
+      },
+      {
+        "sha": "c3c8260b5fa01ad9c3206a1e2afd0c20359c97ac",
+        "branch": "feat/one-command-deploy-20261010",
+        "timestamp": "2026-10-10T11:19:12+08:00",
+        "message": "Document one-command deployment, safe branch rollout and blockers"
       }
     ],
     "pr": null,
