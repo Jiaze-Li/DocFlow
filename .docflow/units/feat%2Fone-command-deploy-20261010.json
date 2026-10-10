@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T03:18:44.613Z",
+  "updatedAt": "2026-10-10T03:19:04.236Z",
   "task": {
     "id": "feat/one-command-deploy-20261010",
     "branch": "feat/one-command-deploy-20261010",
@@ -8,15 +8,26 @@
     "task": "Development branch: feat/one-command-deploy-20261010",
     "started": "2026-10-10T11:18:36+08:00",
     "status": "In progress",
-    "current": "Add safe one-command deployment of central DocFlow workflow",
+    "current": "Expose docflow deploy command with explicit partial-failure status",
     "next": "",
-    "history": [],
+    "history": [
+      {
+        "at": "2026-10-10T11:18:55+08:00",
+        "text": "Add safe one-command deployment of central DocFlow workflow"
+      }
+    ],
     "commits": [
       {
         "sha": "4440cc274a48f79ad47f3f69cd63b2d771ff07f8",
         "branch": "feat/one-command-deploy-20261010",
         "timestamp": "2026-10-10T11:18:36+08:00",
         "message": "Add safe one-command deployment of central DocFlow workflow"
+      },
+      {
+        "sha": "3c796b60036659b74dd8ed1f009c26b16621602e",
+        "branch": "feat/one-command-deploy-20261010",
+        "timestamp": "2026-10-10T11:18:55+08:00",
+        "message": "Expose docflow deploy command with explicit partial-failure status"
       }
     ],
     "pr": null,
