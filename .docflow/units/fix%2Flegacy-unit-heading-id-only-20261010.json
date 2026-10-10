@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T12:11:51.808Z",
+  "updatedAt": "2026-10-10T12:13:48.299Z",
   "task": {
     "id": "fix/legacy-unit-heading-id-only-20261010",
     "branch": "fix/legacy-unit-heading-id-only-20261010",
     "title": "fix/legacy-unit-heading-id-only-20261010",
     "task": "Development branch: fix/legacy-unit-heading-id-only-20261010",
     "started": "2026-10-10T20:05:37+08:00",
-    "status": "In progress",
+    "status": "Completed",
     "current": "Expect Branch headings for legacy Obsidian units",
     "next": "",
     "history": [
@@ -62,13 +62,15 @@
     ],
     "pr": {
       "number": 13,
-      "state": "open",
-      "title": "Obsidian: remove duplicate titles from legacy unit headings",
+      "state": "closed",
+      "title": "Obsidian: use Branch headings for all units without duplicate titles",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/13",
-      "merged": false,
-      "updatedAt": "2026-10-10T12:11:41Z"
+      "merged": true,
+      "mergedAt": "2026-10-10T12:13:36Z",
+      "closedAt": "2026-10-10T12:13:37Z",
+      "updatedAt": "2026-10-10T12:13:37Z"
     },
-    "completed": null,
-    "outcome": null
+    "completed": "2026-10-10T12:13:36Z",
+    "outcome": "Merged"
   }
 }
