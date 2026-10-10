@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-09T16:58:02.230Z",
+  "updatedAt": "2026-10-10T00:19:15.077Z",
   "task": {
     "id": "feat/obsidian-branch-view",
     "branch": "feat/obsidian-branch-view",
     "title": "feat/obsidian-branch-view",
     "task": "Development branch: feat/obsidian-branch-view",
     "started": "2026-10-10T00:57:19+08:00",
-    "status": "In progress",
+    "status": "Completed",
     "current": "Present commit-native progress by branch with PR and compact sections",
     "next": "",
     "history": [],
@@ -21,13 +21,15 @@
     ],
     "pr": {
       "number": 8,
-      "state": "open",
+      "state": "closed",
       "title": "Display commit-native Obsidian progress by branch with PR context",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/8",
-      "merged": false,
-      "updatedAt": "2026-10-09T16:57:50Z"
+      "merged": true,
+      "mergedAt": "2026-10-10T00:19:05Z",
+      "closedAt": "2026-10-10T00:19:05Z",
+      "updatedAt": "2026-10-10T00:19:05Z"
     },
-    "completed": null,
-    "outcome": null
+    "completed": "2026-10-10T00:19:05Z",
+    "outcome": "Merged"
   }
 }
