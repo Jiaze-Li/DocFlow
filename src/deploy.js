@@ -47,15 +47,38 @@ function worktreeBranches(repo) {
   return worktrees;
 }
 
-function checkedOutBranchProblem(worktree, originalSha) {
-  if (!worktree) return null;
-  if (git(worktree, ['rev-parse', 'HEAD']) !== originalSha) {
-    return 'Local worktree differs from the remote tip; refusing to diverge its branch';
+function localBranchTip(repo, branch) {
+  try {
+    return git(repo, ['show-ref', '--verify', '--hash', `refs/heads/${branch}`]);
+  } catch {
+    return null;
   }
-  if (git(worktree, ['status', '--porcelain', '--untracked-files=all'])) {
+}
+
+function checkedOutBranchProblem(repo, branch, worktree) {
+  const localTip = localBranchTip(repo, branch.name);
+  if (localTip && localTip !== branch.sha) {
+    return 'Local branch differs from the remote tip; refusing to create a divergence';
+  }
+  if (worktree && git(worktree, ['status', '--porcelain', '--untracked-files=all'])) {
     return 'Local worktree has uncommitted or untracked files; clean it before deployment';
   }
   return null;
+}
+
+// Verify the remote tree before doing anything to a local checkout.
+function remoteWorkflow(repo, sha) {
+  const name = `${sha}:${WORKFLOW_FILE}`;
+  try {
+    const mode = git(repo, ['ls-tree', sha, '--', WORKFLOW_FILE]).split(/\s+/)[0];
+    if (mode === '120000') throw new Error('Remote workflow is a symlink');
+    return git(repo, ['show', name]) + '\n';
+  } catch (error) {
+    if (String(error.message).includes('Remote workflow is a symlink')) throw error;
+    const existing = git(repo, ['ls-tree', sha, '--', WORKFLOW_FILE]);
+    if (existing) throw error;
+    return null;
+  }
 }
 
 function existingWorkflow(worktree) {
@@ -82,7 +105,16 @@ function existingWorkflow(worktree) {
 
 function deployBranch(repo, branch, worktrees, workflow) {
   const active = worktrees.get(branch.name);
-  const issue = checkedOutBranchProblem(active, branch.sha);
+  try {
+    const previous = remoteWorkflow(repo, branch.sha);
+    if (previous === workflow) return { branch: branch.name, status: 'unchanged' };
+    if (previous && !previous.startsWith(WORKFLOW_MARKER)) {
+      return { branch: branch.name, status: 'blocked', reason: 'Existing workflow is not managed by DocFlow' };
+    }
+  } catch (error) {
+    return { branch: branch.name, status: 'blocked', reason: errorSummary(error) };
+  }
+  const issue = checkedOutBranchProblem(repo, branch, active);
   if (issue) return { branch: branch.name, status: 'blocked', reason: issue };
 
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'docflow-deploy-'));
@@ -110,17 +142,20 @@ function deployBranch(repo, branch, worktrees, workflow) {
       return { branch: branch.name, status: 'blocked', reason: 'Remote branch verification failed after push' };
     }
 
-    if (active) {
-      try {
+    try {
+      if (active) {
         // Only a clean checkout at the old tip is eligible; update without a merge commit.
         git(active, ['merge', '--ff-only', nextSha]);
-      } catch (error) {
-        return {
-          branch: branch.name, status: 'blocked',
-          reason: `Remote deployed, but local worktree needs a fast-forward: ${errorSummary(error)}`,
-          remoteUpdated: true,
-        };
+      } else if (localBranchTip(repo, branch.name) === branch.sha) {
+        // Keep an idle local main/feature branch current for future branches cut from it.
+        git(repo, ['update-ref', `refs/heads/${branch.name}`, nextSha, branch.sha]);
       }
+    } catch (error) {
+      return {
+        branch: branch.name, status: 'blocked',
+        reason: `Remote deployed, but local branch needs a fast-forward: ${errorSummary(error)}`,
+        remoteUpdated: true,
+      };
     }
     return { branch: branch.name, status: 'deployed', commit: nextSha };
   } catch (error) {
