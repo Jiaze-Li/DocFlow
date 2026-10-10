@@ -25,12 +25,42 @@ Mac         ->  `docflow sync` projects docflow-state into the Obsidian note
 
 ```bash
 node /path/to/DocFlow/bin/docflow.js init --project <name> --note "project - <name>.md"
-node /path/to/DocFlow/bin/docflow.js setup-repo      # hook + .github/workflows/docflow.yml + activation record
-git add .github/workflows/docflow.yml && git commit -m "Enable DocFlow commit-native progress" && git push
-node /path/to/DocFlow/bin/docflow.js doctor          # reports missing/stale hook, workflow, state
+node /path/to/DocFlow/bin/docflow.js deploy --json
 ```
 
-`setup-repo` refuses to overwrite an unrelated `commit-msg` hook or workflow file and prints what to add manually. The workflow is a thin caller of `Jiaze-Li/DocFlow/action` (pin it with `--action-ref`); it needs only `contents: write` and never uses `pull_request_target`.
+`deploy` is opt-in. It installs the local commit validator, activates the existing
+durable state, and places **one stable workflow entrypoint** on the remote default
+branch and every existing development branch. Each entrypoint invokes
+`Jiaze-Li/DocFlow/action@main`, so future capture/PR logic updates are made
+centrally in DocFlow instead of copied into every repository.
+
+Deployment uses temporary Git worktrees and ordinary fast-forward pushes. It
+never stages your working files, force-pushes, rewrites branch history, or
+overwrites another project's workflow. A checked-out branch must be clean and
+at the same tip as `origin`; successful deployment fast-forwards that checkout.
+If a branch is dirty/diverged/protected or its workflow is unrelated, `deploy`
+reports it under `blocked` and exits nonzero. Resolve the blocker (or use
+a PR for a protected branch), then rerun; already-deployed branches are no-ops.
+The `deployed`, `unchanged`, and `blocked` fields show what actually happened.
+Deployment only updates **remote-tracking and repository state**, not other repos.
+It does not run or guarantee future GitHub Actions jobs: the first real push
+must confirm ingestion in GitHub Actions.
+
+For an older repository, you can run `deploy` directly if `docflow-state`
+already exists. The activation snapshot only anchors current branch tips: it
+**does not backfill** earlier commits. `docflow deploy` is safe to rerun.
+
+The existing `setup-repo` command remains for manual setup and offline workflows:
+
+```bash
+node /path/to/DocFlow/bin/docflow.js setup-repo
+git add .github/workflows/docflow.yml && git commit -m "Enable DocFlow commit-native progress" && git push
+node /path/to/DocFlow/bin/docflow.js doctor
+```
+
+Both commands refuse to overwrite an unrelated `commit-msg` hook or workflow.
+The workflow needs only `contents: write` and never uses
+`pull_request_target`; `--action-ref` can override the action revision.
 
 The commit subject rules (`docflow validate-message --message "..."`): non-empty, 6–100 characters, not a placeholder (`wip`, `update`, `changes`, …), a blank line before any body. Merge/revert/fixup subjects pass.
 
