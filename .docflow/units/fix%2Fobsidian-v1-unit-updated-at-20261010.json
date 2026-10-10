@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T03:06:20.481Z",
+  "updatedAt": "2026-10-10T03:06:35.761Z",
   "task": {
     "id": "fix/obsidian-v1-unit-updated-at-20261010",
     "branch": "fix/obsidian-v1-unit-updated-at-20261010",
@@ -30,7 +30,14 @@
         "message": "Cover legacy unit timestamps, SGT and idempotent multi-unit sync"
       }
     ],
-    "pr": null,
+    "pr": {
+      "number": 10,
+      "state": "open",
+      "title": "Obsidian: show Updated at for legacy durable units",
+      "url": "https://github.com/Jiaze-Li/DocFlow/pull/10",
+      "merged": false,
+      "updatedAt": "2026-10-10T03:06:26Z"
+    },
     "completed": null,
     "outcome": null
   }
