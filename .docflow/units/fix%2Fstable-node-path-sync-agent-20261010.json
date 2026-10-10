@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T12:44:28.927Z",
+  "updatedAt": "2026-10-10T12:44:41.309Z",
   "task": {
     "id": "fix/stable-node-path-sync-agent-20261010",
     "branch": "fix/stable-node-path-sync-agent-20261010",
@@ -40,7 +40,14 @@
         "message": "Use simple fixtures for executable symlink tests"
       }
     ],
-    "pr": null,
+    "pr": {
+      "number": 14,
+      "state": "open",
+      "title": "Use stable Homebrew Node path for DocFlow sync agent",
+      "url": "https://github.com/Jiaze-Li/DocFlow/pull/14",
+      "merged": false,
+      "updatedAt": "2026-10-10T12:44:32Z"
+    },
     "completed": null,
     "outcome": null
   }
