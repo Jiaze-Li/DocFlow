@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-10T10:15:34.744Z",
+  "updatedAt": "2026-10-10T10:25:22.634Z",
   "task": {
     "id": "fix/obsidian-history-newest-first-20261010",
     "branch": "fix/obsidian-history-newest-first-20261010",
     "title": "fix/obsidian-history-newest-first-20261010",
     "task": "Development branch: fix/obsidian-history-newest-first-20261010",
     "started": "2026-10-10T18:13:50+08:00",
-    "status": "In progress",
+    "status": "Completed",
     "current": "Keep history ordering assertions clear and literal",
     "next": "",
     "history": [
@@ -42,13 +42,15 @@
     ],
     "pr": {
       "number": 12,
-      "state": "open",
+      "state": "closed",
       "title": "Obsidian: show newest History entries first",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/12",
-      "merged": false,
-      "updatedAt": "2026-10-10T10:15:24Z"
+      "merged": true,
+      "mergedAt": "2026-10-10T10:25:14Z",
+      "closedAt": "2026-10-10T10:25:14Z",
+      "updatedAt": "2026-10-10T10:25:14Z"
     },
-    "completed": null,
-    "outcome": null
+    "completed": "2026-10-10T10:25:14Z",
+    "outcome": "Merged"
   }
 }
