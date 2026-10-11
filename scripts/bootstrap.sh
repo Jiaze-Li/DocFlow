@@ -39,6 +39,21 @@ if [ -n "$VAULT" ]; then
   echo "Obsidian vault set to: $VAULT/$PROJECT_FOLDER"
 fi
 
+# Make `docflow` a real command (a tiny wrapper that always runs the newest checkout).
+BIN_DIR="$HOME/.local/bin"
+mkdir -p "$BIN_DIR"
+printf '#!/usr/bin/env bash\nexec node "%s" "$@"\n' "$CLI" > "$BIN_DIR/docflow"
+chmod +x "$BIN_DIR/docflow"
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *)
+    PROFILE="$HOME/.zshrc"; [ -n "${BASH_VERSION:-}" ] && [ "$(basename "${SHELL:-}")" = bash ] && PROFILE="$HOME/.bashrc"
+    if ! grep -qs '\.local/bin' "$PROFILE" 2>/dev/null; then
+      printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$PROFILE"
+      echo "Added ~/.local/bin to PATH in $PROFILE. Open a new terminal window for the 'docflow' command to work."
+    fi ;;
+esac
+
 node "$CLI" install-global
 node "$CLI" catch-up >/dev/null || echo "Note: some projects could not be refreshed yet (see 'docflow doctor')." >&2
 
@@ -53,4 +68,4 @@ fi
 
 echo
 echo "DocFlow is ready. To add a project: cd into it and run:"
-echo "  node \"$CLI\" init --project <name> --note \"project - <name>.md\" && node \"$CLI\" deploy"
+echo "  docflow init --project <name> --note \"project - <name>.md\" && docflow deploy"
