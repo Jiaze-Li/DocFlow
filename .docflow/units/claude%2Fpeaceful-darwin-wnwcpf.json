@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T09:17:38.859Z",
+  "updatedAt": "2026-10-11T10:50:27.333Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -8,7 +8,7 @@
     "task": "Development branch: claude/peaceful-darwin-wnwcpf",
     "started": "2026-10-11T06:59:16Z",
     "status": "Completed",
-    "current": "Apply event ordering to archived pull requests",
+    "current": "Document how to check that auto-update is working",
     "next": "",
     "history": [
       {
@@ -66,6 +66,10 @@
       {
         "at": "2026-10-11T08:52:11Z",
         "text": "Show every pull request of a reused branch"
+      },
+      {
+        "at": "2026-10-11T10:50:17Z",
+        "text": "Apply event ordering to archived pull requests"
       }
     ],
     "commits": [
@@ -158,6 +162,12 @@
         "branch": "claude/peaceful-darwin-wnwcpf",
         "timestamp": "2026-10-11T08:52:11Z",
         "message": "Apply event ordering to archived pull requests"
+      },
+      {
+        "sha": "875e00c110a6583d93a5cbb504f705da4fedeb56",
+        "branch": "claude/peaceful-darwin-wnwcpf",
+        "timestamp": "2026-10-11T10:50:17Z",
+        "message": "Document how to check that auto-update is working"
       }
     ],
     "pr": {
