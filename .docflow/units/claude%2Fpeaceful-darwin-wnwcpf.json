@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T07:56:47.410Z",
+  "updatedAt": "2026-10-11T08:00:46.299Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -8,7 +8,7 @@
     "task": "Development branch: claude/peaceful-darwin-wnwcpf",
     "started": "2026-10-11T06:59:16Z",
     "status": "Completed",
-    "current": "Auto-update DocFlow to the latest released v2 during catch-up",
+    "current": "Release the stable v2 tag automatically on every tested push to main",
     "next": "",
     "history": [
       {
@@ -30,6 +30,10 @@
       {
         "at": "2026-10-11T07:56:24Z",
         "text": "Use actions/checkout@v4 in the release workflow, matching docflow.yml"
+      },
+      {
+        "at": "2026-10-11T08:00:33Z",
+        "text": "Auto-update DocFlow to the latest released v2 during catch-up"
       }
     ],
     "commits": [
@@ -68,6 +72,12 @@
         "branch": "claude/peaceful-darwin-wnwcpf",
         "timestamp": "2026-10-11T07:56:24Z",
         "message": "Auto-update DocFlow to the latest released v2 during catch-up"
+      },
+      {
+        "sha": "fc0615c67ace60773b9feb4054139c5e0396f6ef",
+        "branch": "claude/peaceful-darwin-wnwcpf",
+        "timestamp": "2026-10-11T08:00:33Z",
+        "message": "Release the stable v2 tag automatically on every tested push to main"
       }
     ],
     "pr": {
