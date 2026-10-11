@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T08:23:21.979Z",
+  "updatedAt": "2026-10-11T08:26:24.404Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -122,13 +122,13 @@
     ],
     "pr": {
       "number": 18,
-      "state": "open",
+      "state": "closed",
       "title": "Remove the v1 checkpoint workflow",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/18",
       "merged": true,
-      "mergedAt": "2026-10-11T08:07:09Z",
-      "closedAt": "2026-10-11T08:07:09Z",
-      "updatedAt": "2026-10-11T08:23:11Z"
+      "mergedAt": "2026-10-11T08:26:14Z",
+      "closedAt": "2026-10-11T08:26:15Z",
+      "updatedAt": "2026-10-11T08:26:15Z"
     },
     "completed": "2026-10-11T07:41:53Z",
     "outcome": "Merged"
