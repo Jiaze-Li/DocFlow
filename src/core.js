@@ -682,13 +682,15 @@ export function setBranchNext({
   cwd = process.cwd(), branch, next = '', now = new Date(), exec = execFileSync, homeDir = os.homedir(),
 } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
-  if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
   const branchName = normalizeBranchName(branch);
   const text = clean(next, 'next', { max: 2000 });
   const unitPath = resolveStateUnitPath(repoRoot, branchName, exec);
 
   return withStateLock(repoRoot, homeDir, exec, () => {
+    // Refresh before anything reads durable state: a clone made before DocFlow was enabled
+    // (or without the docflow-state refspec) only learns about it from origin.
     refreshStateFromOrigin({ repoRoot, homeDir, exec });
+    if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
     const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
     const task = getBranchUnit(repoRoot, branchName, exec);
     if (!task) {

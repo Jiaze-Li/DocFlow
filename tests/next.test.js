@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configureGlobal, initRepo, loadState, recordCommitProgress, setBranchNext } from '../src/core.js';
-import { tempGitRepo, tempHome } from './helpers.js';
+import { cloneGitRepo, tempBareGitRepo, tempGitRepo, tempHome } from './helpers.js';
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'docflow.js');
 const git = (repo, ...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
@@ -58,4 +58,20 @@ test('docflow next keeps text that starts with -- when given after a bare --', (
   execFileSync('node', [CLI, 'next', '--cwd', repo, '--', '--experimental flag support'], { encoding: 'utf8', env: { ...process.env, HOME: home } });
   assert.match(fs.readFileSync(note, 'utf8'), /### Next\n--experimental flag support/);
   assert.equal(loadState(repo).tasks[0].next, '--experimental flag support');
+});
+
+test('next refreshes state from origin first, so a clone made before DocFlow was enabled still works', () => {
+  const remote = tempBareGitRepo();
+  const dev = tempGitRepo();
+  const home = tempHome();
+  git(dev, 'remote', 'add', 'origin', remote);
+  git(dev, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+  const stale = cloneGitRepo(remote); // cloned before DocFlow existed on the remote
+  initRepo({ cwd: dev, homeDir: home, projectName: 'Proj', obsidianNote: 'project - proj.md' });
+  git(dev, 'checkout', '-qb', 'feat/ui');
+  git(dev, 'commit', '--allow-empty', '-q', '--no-verify', '-m', 'Add the settings page');
+  recordCommitProgress({ cwd: dev, homeDir: home, branch: 'feat/ui', commit: { sha: git(dev, 'rev-parse', 'HEAD'), message: 'Add the settings page', timestamp: '2026-10-01T00:00:00.000Z' } });
+  const result = setBranchNext({ cwd: stale, homeDir: tempHome(), branch: 'feat/ui', next: 'Wire up dark mode' });
+  assert.equal(result.changed, true);
+  assert.equal(result.task.next, 'Wire up dark mode');
 });
