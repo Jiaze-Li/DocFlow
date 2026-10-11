@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T03:01:27.181Z",
+  "updatedAt": "2026-10-11T03:40:29.358Z",
   "task": {
     "id": "fix/obsidian-branches-newest-first-20261011",
     "branch": "fix/obsidian-branches-newest-first-20261011",
     "title": "fix/obsidian-branches-newest-first-20261011",
     "task": "Development branch: fix/obsidian-branches-newest-first-20261011",
     "started": "2026-10-11T11:01:06+08:00",
-    "status": "In progress",
+    "status": "Completed",
     "current": "Test newest-first branch order and idempotent Obsidian projection",
     "next": "",
     "history": [
@@ -32,13 +32,15 @@
     ],
     "pr": {
       "number": 15,
-      "state": "open",
+      "state": "closed",
       "title": "Show newest DocFlow branches first in Obsidian",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/15",
-      "merged": false,
-      "updatedAt": "2026-10-11T03:01:18Z"
+      "merged": true,
+      "mergedAt": "2026-10-11T03:40:21Z",
+      "closedAt": "2026-10-11T03:40:21Z",
+      "updatedAt": "2026-10-11T03:40:21Z"
     },
-    "completed": null,
-    "outcome": null
+    "completed": "2026-10-11T03:40:21Z",
+    "outcome": "Merged"
   }
 }
