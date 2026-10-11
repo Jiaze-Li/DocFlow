@@ -1,13 +1,20 @@
 name: Release stable tag
 
-# Projects use `Jiaze-Li/DocFlow/action@v2`, so DocFlow development on main never
-# changes them by accident. Run this workflow (Actions tab -> "Release stable tag" ->
-# "Run workflow") after main has been tested to move the stable `v2` tag to main.
+# Projects and Macs use the stable `v2` tag, so DocFlow development never changes them
+# mid-edit. Every push to main re-runs the tests and, only if they pass, moves `v2` to
+# that commit. A failing main therefore never reaches anyone. Can also be run by hand.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
+
+# Serialize releases so two quick merges cannot race on the tag.
+concurrency:
+  group: release-stable-tag
+  cancel-in-progress: false
 
 jobs:
   release:
