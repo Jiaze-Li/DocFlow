@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T08:32:17.856Z",
+  "updatedAt": "2026-10-11T08:33:45.393Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -142,13 +142,13 @@
     ],
     "pr": {
       "number": 20,
-      "state": "open",
+      "state": "closed",
       "title": "Remove the release workflow (step 2 of 2)",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/20",
       "merged": true,
-      "mergedAt": "2026-10-11T08:30:05Z",
-      "closedAt": "2026-10-11T08:30:05Z",
-      "updatedAt": "2026-10-11T08:32:08Z"
+      "mergedAt": "2026-10-11T08:33:34Z",
+      "closedAt": "2026-10-11T08:33:34Z",
+      "updatedAt": "2026-10-11T08:33:35Z"
     },
     "completed": "2026-10-11T07:41:53Z",
     "outcome": "Merged"
