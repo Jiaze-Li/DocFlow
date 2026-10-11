@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T06:59:38.885Z",
+  "updatedAt": "2026-10-11T07:03:38.231Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -8,15 +8,26 @@
     "task": "Development branch: claude/peaceful-darwin-wnwcpf",
     "started": "2026-10-11T06:59:16Z",
     "status": "In progress",
-    "current": "Add docflow next, stable v2 action tag, one-step install/update script",
+    "current": "Bootstrap installs a real docflow command on PATH",
     "next": "",
-    "history": [],
+    "history": [
+      {
+        "at": "2026-10-11T07:03:29Z",
+        "text": "Add docflow next, stable v2 action tag, one-step install/update script"
+      }
+    ],
     "commits": [
       {
         "sha": "0a957eee828a5997ec14d07ac48f00495a7a2e14",
         "branch": "claude/peaceful-darwin-wnwcpf",
         "timestamp": "2026-10-11T06:59:16Z",
         "message": "Add docflow next, stable v2 action tag, one-step install/update script"
+      },
+      {
+        "sha": "56ec73f01973ad34f48e9599d7babc75d18102c6",
+        "branch": "claude/peaceful-darwin-wnwcpf",
+        "timestamp": "2026-10-11T07:03:29Z",
+        "message": "Bootstrap installs a real docflow command on PATH"
       }
     ],
     "pr": {
