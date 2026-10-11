@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MANAGED_BEGIN, MANAGED_END, configureGlobal, initRepo, renderTaskUnit, startTask, syncObsidian } from '../src/core.js';
+import { MANAGED_BEGIN, MANAGED_END, configureGlobal, initRepo, renderTaskUnit, startTask, syncObsidian, upsertManagedUnit, sortManagedUnitsByStarted } from '../src/core.js';
 import { AGENT_LABEL, catchUpAll, installSyncAgent, listRegisteredRepos, registerRepo, stableNodePath, syncAgentStatus, uninstallSyncAgent } from '../src/catchup.js';
 import { ingestPush } from '../src/ingest.js';
 import { setupRepo } from '../src/setup-repo.js';
@@ -158,6 +158,38 @@ test('repeated sync is byte-idempotent and manual content outside the managed bl
   cli(['sync', '--refresh', '--cwd', c.repo], c.home);
   cli(['sync', '--cwd', c.repo], c.home);
   assert.equal(fs.readFileSync(c.notePath, 'utf8'), edited);
+});
+
+
+test('branch blocks sort by Started newest-first without rewriting sibling content or manual notes', () => {
+  const task = (id, started, current) => ({
+    id, branch: id, title: id, task: `Development branch: ${id}`,
+    started, status: 'In progress', current, next: '', history: [],
+    pr: null, completed: null, outcome: null,
+  });
+  const old = task('feat/old', '2026-10-09T10:00:00+08:00', 'Older branch work');
+  const newest = task('feat/new', '2026-10-11T10:00:00+08:00', 'New branch work');
+  const sameTime = task('feat/tie', newest.started, 'Same timestamp');
+  const manual = '# Hand-written project notes\n\n';
+  const suffix = '\n## My manual footer\nPreserve this too.\n';
+  let note = upsertManagedUnit(manual, old);
+  note = upsertManagedUnit(note, newest);
+  note = upsertManagedUnit(note, sameTime);
+  note += suffix;
+  const ordered = sortManagedUnitsByStarted(note, [old, newest, sameTime]);
+  assert.ok(ordered.indexOf('## Branch: feat/new') < ordered.indexOf('## Branch: feat/old'));
+  assert.ok(ordered.indexOf('## Branch: feat/tie') < ordered.indexOf('## Branch: feat/old'));
+  assert.ok(ordered.startsWith(manual.trimEnd()));
+  assert.ok(ordered.endsWith(suffix));
+  assert.equal(sortManagedUnitsByStarted(ordered, [old, newest, sameTime]), ordered, 'second sync does not rewrite');
+
+  const oldChanged = { ...old, current: 'Updated old branch only' };
+  const updated = sortManagedUnitsByStarted(upsertManagedUnit(ordered, oldChanged), [oldChanged, newest, sameTime]);
+  assert.ok(updated.indexOf('## Branch: feat/new') < updated.indexOf('## Branch: feat/old'));
+  assert.match(updated, /Updated old branch only/);
+  assert.match(updated, /New branch work/);
+  assert.equal(updated.split('## Branch: feat/new').length, 2, 'sibling was not duplicated');
+  assert.equal(sortManagedUnitsByStarted(updated, [oldChanged, newest, sameTime]), updated);
 });
 
 test('offline Mac catches up from durable state in a fresh process without loss or duplication', () => {
