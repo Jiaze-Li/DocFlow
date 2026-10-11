@@ -1,21 +1,28 @@
 name: Release stable tag
 
-# Projects use `Jiaze-Li/DocFlow/action@v2`, so DocFlow development on main never
-# changes them by accident. Run this workflow (Actions tab -> "Release stable tag" ->
-# "Run workflow") after main has been tested to move the stable `v2` tag to main.
+# Projects and Macs use the stable `v2` tag, so DocFlow development never changes them
+# mid-edit. Every push to main re-runs the tests and, only if they pass, moves `v2` to
+# that commit. A failing main therefore never reaches anyone. Can also be run by hand.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# Serialize releases so two quick merges cannot race on the tag.
+concurrency:
+  group: release-stable-tag
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # Test exactly the commit that triggered this run (github.sha), not whatever main is by now.
       - uses: actions/checkout@v4
         with:
-          ref: main
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -24,7 +31,14 @@ jobs:
         run: npm test
       - name: Move the v2 tag to this commit
         run: |
+          # Only the newest main commit may move the tag, so a delayed older run can never
+          # move it backwards; a newer push has its own run that will tag it.
+          git fetch --quiet origin main
+          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+            echo "main has moved past $GITHUB_SHA (or this is not main); not moving v2."
+            exit 0
+          fi
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git tag -f v2
+          git tag -f v2 "$GITHUB_SHA"
           git push -f origin refs/tags/v2

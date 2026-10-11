@@ -57,6 +57,24 @@ function policyMatches(file, expected) {
   return raw.slice(s + POLICY_BEGIN.length, e).trim() === expected.trim();
 }
 
+/**
+ * Which agent policies are already installed, judged from their files rather than from
+ * `claude --version` and friends. Background jobs (launchd) run with a minimal PATH and
+ * cannot find the agent CLIs, but the policy files they installed earlier are still there.
+ */
+export function installedPolicyTargets(homeDir = os.homedir()) {
+  const files = {
+    claude: path.join(homeDir, '.claude', 'CLAUDE.md'),
+    codex: path.join(homeDir, '.codex', 'AGENTS.md'),
+    agy: path.join(homeDir, '.gemini', 'GEMINI.md'),
+  };
+  const present = {};
+  for (const [name, file] of Object.entries(files)) {
+    present[name] = fs.existsSync(file) && fs.readFileSync(file, 'utf8').includes(POLICY_BEGIN);
+  }
+  return present;
+}
+
 export function installGlobal({
   homeDir = os.homedir(), cliPath = DEFAULT_CLI, configDir, exec = execFileSync, present,
 } = {}) {
