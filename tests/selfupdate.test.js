@@ -80,3 +80,28 @@ test('a checkout that is ahead of the release is never moved, and offline is a q
   const offline = selfUpdate({ appDir: w.app, homeDir: w.home, reinstallPolicy: w.policy });
   assert.equal(offline.updated, false);
 });
+
+test('default policy refresh uses installed policy files, not agent CLIs on PATH', async () => {
+  const { installGlobal, installedPolicyTargets } = await import('../src/install.js');
+  const home = tempHome();
+  assert.deepEqual(installedPolicyTargets(home), { claude: false, codex: false, agy: false });
+  installGlobal({ homeDir: home, present: { claude: true, codex: false, agy: false } });
+  assert.deepEqual(installedPolicyTargets(home), { claude: true, codex: false, agy: false });
+
+  // Simulate a stale policy, then an update with a PATH that has no agent CLIs at all.
+  const file = path.join(home, '.claude', 'CLAUDE.md');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('Progress comes from Git', 'STALE TEXT'));
+  const w = world();
+  w.release('Released change');
+  const savedPath = process.env.PATH;
+  process.env.PATH = path.dirname(process.execPath) + path.delimiter + '/usr/bin' + path.delimiter + '/bin';
+  try {
+    const result = selfUpdate({ appDir: w.app, homeDir: home });
+    assert.equal(result.updated, true);
+    assert.equal(result.policy, 'reinstalled');
+  } finally {
+    process.env.PATH = savedPath;
+  }
+  assert.match(fs.readFileSync(file, 'utf8'), /Progress comes from Git/);
+  assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /STALE TEXT/);
+});

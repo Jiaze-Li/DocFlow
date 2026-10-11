@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { installGlobal } from './install.js';
+import { installGlobal, installedPolicyTargets } from './install.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const STABLE_TAG = 'v2';
@@ -25,7 +25,13 @@ function git(appDir, args, exec) {
 
 export function selfUpdate({
   appDir = ROOT, homeDir = os.homedir(), exec = execFileSync, tag = STABLE_TAG,
-  reinstallPolicy = () => installGlobal({ homeDir }),
+  // Refresh the policies that are already installed. Do not re-detect the agent CLIs: under
+  // launchd the PATH is minimal and they would look absent.
+  reinstallPolicy = () => {
+    const present = installedPolicyTargets(homeDir);
+    if (!Object.values(present).some(Boolean)) return;
+    installGlobal({ homeDir, present });
+  },
 } = {}) {
   if (fs.existsSync(autoUpdateOptOutPath(homeDir))) return { updated: false, reason: 'auto-update is turned off' };
   if (!fs.existsSync(path.join(appDir, '.git'))) return { updated: false, reason: 'not a git checkout' };
