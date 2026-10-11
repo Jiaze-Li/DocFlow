@@ -38,7 +38,7 @@ git push    ->  GitHub Action ingests every new commit onto docflow-state (once 
 Mac         ->  `docflow sync` projects docflow-state into the Obsidian note
 ```
 
-- One development branch = one unit. `main`, `master`, the repository default branch and `docflow-state` are never units.
+- One development branch = one unit. If the same branch name is reused for several pull requests, the unit lists all of them (newest first, each with its own state); each new pull request restarts the unit's lifecycle. `main`, `master`, the repository default branch and `docflow-state` are never units.
 - One distinct commit SHA = one progress event (repository-wide replay is idempotent). Two commits with identical subjects are two events.
 - The commit's **first non-empty line** is the progress text. Bodies are Git detail and are never promoted; `Next` is never inferred.
 - PR opened → PR metadata attaches to the branch unit; PR merged → `Completed` / `Merged`; closed unmerged → `Abandoned`. Deleting a branch never deletes progress.

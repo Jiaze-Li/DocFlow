@@ -35,6 +35,7 @@ export const STATUS_VALUES = new Set(['In progress', 'Waiting', 'Paused', 'Compl
 // Single limit for unit ids, branch names, runtime/active ids and marker keys so state
 // written by one operation is always readable and projectable by every other.
 export const MAX_TASK_ID_LENGTH = 200;
+const MAX_EARLIER_PRS = 200;
 
 function clean(value, label, { required = false, max = 4000 } = {}) {
   const text = String(value ?? '').replace(/\0/g, '').trim();
@@ -150,6 +151,12 @@ function validateCommitProgress(commit) {
   return { sha, branch, timestamp, message };
 }
 
+function upsertEarlierPr(list, pr) {
+  const next = (list || []).filter((entry) => entry.number !== pr.number);
+  next.push(validatePullRequest(pr));
+  return next.sort((a, b) => b.number - a.number).slice(0, MAX_EARLIER_PRS);
+}
+
 function validatePullRequest(pr) {
   if (!pr || typeof pr !== 'object' || Array.isArray(pr)) throw new Error('Invalid PR metadata');
   const number = Number(pr.number);
@@ -229,6 +236,17 @@ function validateTask(task) {
 
   if (task.pr != null) {
     task.pr = validatePullRequest(task.pr);
+  }
+
+  // Earlier pull requests that used the same branch (a branch name can be reused after a
+  // merge). `pr` stays the newest one; this list holds the rest, newest first.
+  if (task.prs != null) {
+    if (!Array.isArray(task.prs) || task.prs.length > MAX_EARLIER_PRS) throw new Error('Invalid DocFlow task prs');
+    task.prs = task.prs.map(validatePullRequest).sort((a, b) => b.number - a.number);
+    const numbers = new Set(task.prs.map((entry) => entry.number));
+    if (numbers.size !== task.prs.length || (task.pr && numbers.has(task.pr.number))) {
+      throw new Error('Duplicate pull request number in task');
+    }
   }
 
   return task;
@@ -991,6 +1009,33 @@ export function recordPullRequestEvent({
       task = JSON.parse(JSON.stringify(task));
     }
 
+    // A branch name can be reused for several pull requests (merge, then keep working on the
+    // same branch). GitHub numbers pull requests increasing, so the number tells which is which.
+    // `pr` holds the newest one; earlier ones are kept in `prs` so none is forgotten.
+    if (task.pr && validPr.number !== task.pr.number) {
+      if (validPr.number < task.pr.number) {
+        // A late event for an older pull request: update its own entry, never the current one.
+        const existing = (task.prs || []).find((entry) => entry.number === validPr.number);
+        task.prs = upsertEarlierPr(task.prs, {
+          ...(existing || {}), ...validPr, merged: Boolean(existing?.merged || validPr.merged),
+        });
+        writeTaskUnit(repoRoot, task, {
+          updatedAt: isoNow(now), homeDir, exec,
+          message: `DocFlow: PR #${validPr.number} ${validPr.merged ? 'merged' : validPr.state} on ${branchName} (earlier PR)`,
+          expectedRevision,
+        });
+        return { repoRoot, task, created: false };
+      }
+      // A newer pull request: archive the previous one and start this one's lifecycle fresh.
+      task.prs = upsertEarlierPr(task.prs, task.pr);
+      task.pr = null;
+      if (task.status === 'Completed' || task.status === 'Abandoned') {
+        task.status = 'In progress';
+        task.outcome = null;
+        task.completed = null;
+      }
+    }
+
     // Preserve existing merged state if already merged and incoming event is out-of-order
     const wasAlreadyMerged = Boolean(task.pr?.merged || task.status === 'Completed');
     const merged = validPr.merged !== undefined ? (validPr.merged || wasAlreadyMerged) : wasAlreadyMerged;
@@ -1126,11 +1171,16 @@ export function renderTaskUnit(task, updatedAt = null) {
         next: normalized.next || '',
         history: normalized.history.map((e) => e.text),
       };
-    const pr = normalized.pr;
-    const prUrl = typeof pr?.url === 'string'
-      && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(pr.url)
-      ? pr.url : null;
-    const prLabel = pr ? (prUrl ? `[#${pr.number}](${prUrl})` : `#${pr.number}`) : '';
+    // Every pull request that used this branch, newest first, each with its own state.
+    const allPrs = [normalized.pr, ...(normalized.prs || [])].filter(Boolean).sort((a, b) => b.number - a.number);
+    const prLabel = allPrs.map((entry) => {
+      const url = typeof entry.url === 'string'
+        && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(entry.url)
+        ? entry.url : null;
+      const link = url ? `[#${entry.number}](${url})` : `#${entry.number}`;
+      const state = entry.merged ? 'merged' : (entry.state === 'closed' ? 'closed' : 'open');
+      return allPrs.length > 1 ? `${link} ${state}` : link;
+    }).join(' · ');
     const status = normalized.outcome ? `${normalized.status} · ${normalized.outcome}` : normalized.status;
     const lines = [
       markers.begin,
