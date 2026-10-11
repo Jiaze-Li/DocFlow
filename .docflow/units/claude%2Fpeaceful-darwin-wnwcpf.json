@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T08:00:48.906Z",
+  "updatedAt": "2026-10-11T08:02:06.312Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -8,7 +8,7 @@
     "task": "Development branch: claude/peaceful-darwin-wnwcpf",
     "started": "2026-10-11T06:59:16Z",
     "status": "Completed",
-    "current": "Release the stable v2 tag automatically on every tested push to main",
+    "current": "Update selfupdate comment for automatic releases",
     "next": "",
     "history": [
       {
@@ -34,6 +34,10 @@
       {
         "at": "2026-10-11T08:00:33Z",
         "text": "Auto-update DocFlow to the latest released v2 during catch-up"
+      },
+      {
+        "at": "2026-10-11T08:01:55Z",
+        "text": "Release the stable v2 tag automatically on every tested push to main"
       }
     ],
     "commits": [
@@ -78,6 +82,12 @@
         "branch": "claude/peaceful-darwin-wnwcpf",
         "timestamp": "2026-10-11T08:00:33Z",
         "message": "Release the stable v2 tag automatically on every tested push to main"
+      },
+      {
+        "sha": "2e7ce21fe3c655590e10493a050640bdae95cda7",
+        "branch": "claude/peaceful-darwin-wnwcpf",
+        "timestamp": "2026-10-11T08:01:55Z",
+        "message": "Update selfupdate comment for automatic releases"
       }
     ],
     "pr": {
