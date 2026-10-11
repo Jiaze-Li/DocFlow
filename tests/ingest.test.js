@@ -410,7 +410,7 @@ test('workflow template is a thin least-privilege caller that cannot recurse on 
   assert.doesNotMatch(yml, /^concurrency:/m, 'a concurrency group would let GitHub cancel queued runs and drop events');
   assert.doesNotMatch(yml, /secrets\./);
   assert.match(yml, /head\.repo\.full_name == github\.repository/);
-  assert.match(yml, /uses: Jiaze-Li\/DocFlow\/action@main/);
+  assert.match(yml, /uses: Jiaze-Li\/DocFlow\/action@v2/);
   assert.equal((yml.match(/run:/g) || []).length, 0, 'no logic duplicated in the repository workflow');
 });
 

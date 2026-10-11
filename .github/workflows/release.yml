@@ -1,0 +1,30 @@
+name: Release stable tag
+
+# Projects use `Jiaze-Li/DocFlow/action@v2`, so DocFlow development on main never
+# changes them by accident. Run this workflow (Actions tab -> "Release stable tag" ->
+# "Run workflow") after main has been tested to move the stable `v2` tag to main.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run tests before releasing
+        run: npm test
+      - name: Move the v2 tag to this commit
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git tag -f v2
+          git push -f origin refs/tags/v2

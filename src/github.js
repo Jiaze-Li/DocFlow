@@ -8,7 +8,7 @@ import { resolveRepoRoot } from './core.js';
 export const WORKFLOW_MARKER = '# DOCFLOW-WORKFLOW v1';
 export const WORKFLOW_FILE = '.github/workflows/docflow.yml';
 export const DEFAULT_ACTION_REPO = 'Jiaze-Li/DocFlow';
-export const DEFAULT_ACTION_REF = 'main';
+export const DEFAULT_ACTION_REF = 'v2';
 
 export function renderWorkflow({ actionRepo = DEFAULT_ACTION_REPO, actionRef = DEFAULT_ACTION_REF } = {}) {
   return `${WORKFLOW_MARKER} (thin caller managed by DocFlow; logic lives in ${actionRepo}/action)

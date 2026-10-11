@@ -21,17 +21,4 @@ jobs:
           node-version: '22'
       - run: npm test
       - name: Syntax check
-        run: |
-          node --check bin/docflow.js
-          node --check bin/install-global.js
-          node --check scripts/setup.js
-          node --check src/core.js
-          node --check src/state-store.js
-          node --check src/install.js
-          node --check src/doctor.js
-          node --check src/cli.js
-          node --check src/validator.js
-          node --check src/hooks.js
-          node --check src/ingest.js
-          node --check src/github.js
-          node --check src/setup-repo.js
+        run: git ls-files '*.js' | xargs -n1 node --check
