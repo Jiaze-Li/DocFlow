@@ -70,3 +70,28 @@ test('a branch with a single pull request renders exactly as before', () => {
   record(repo, open(5, '2026-10-01T01:00:00.000Z'));
   assert.match(renderTaskUnit(loadState(repo).tasks[0]), new RegExp(`\\*\\*PR:\\*\\* \\[#5\\]\\(${url(5)}\\)\\n`));
 });
+
+test('a delayed opened/synchronize event cannot reopen an archived pull request', () => {
+  const repo = setup();
+  record(repo, open(16, '2026-10-01T01:00:00.000Z'));
+  record(repo, { number: 16, title: 'PR 16', state: 'closed', merged: false, closedAt: '2026-10-01T03:00:00.000Z', updatedAt: '2026-10-01T03:00:00.000Z', url: url(16) });
+  record(repo, open(17, '2026-10-02T01:00:00.000Z'));
+
+  // 16 was closed without merging; a delayed "synchronize" from before the close arrives late.
+  const result = record(repo, open(16, '2026-10-01T02:00:00.000Z'));
+  assert.equal(result.ignored, true);
+  let archived = loadState(repo).tasks[0].prs.find((p) => p.number === 16);
+  assert.equal(archived.state, 'closed');
+  assert.equal(archived.updatedAt, '2026-10-01T03:00:00.000Z');
+
+  // Even without a usable timestamp, a closed PR is not silently reopened.
+  record(repo, { number: 16, state: 'open', url: url(16) });
+  archived = loadState(repo).tasks[0].prs.find((p) => p.number === 16);
+  assert.equal(archived.state, 'closed');
+
+  // A genuine, provably newer reopen is accepted.
+  recordPullRequestEvent({ cwd: repo, branch: 'work/reused', action: 'reopened', pr: open(16, '2026-10-02T00:00:00.000Z') });
+  archived = loadState(repo).tasks[0].prs.find((p) => p.number === 16);
+  assert.equal(archived.state, 'open');
+  assert.equal(loadState(repo).tasks[0].pr.number, 17);
+});

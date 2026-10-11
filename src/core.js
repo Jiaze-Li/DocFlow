@@ -1014,10 +1014,23 @@ export function recordPullRequestEvent({
     // `pr` holds the newest one; earlier ones are kept in `prs` so none is forgotten.
     if (task.pr && validPr.number !== task.pr.number) {
       if (validPr.number < task.pr.number) {
-        // A late event for an older pull request: update its own entry, never the current one.
+        // A late event for an older pull request: update its own entry, never the current one,
+        // and apply the same ordering protection as for the current PR so a delayed "opened" or
+        // "synchronize" cannot reopen a PR that is already closed or merged.
         const existing = (task.prs || []).find((entry) => entry.number === validPr.number);
+        if (existing) {
+          const isTerminal = Boolean(existing.merged || existing.state === 'closed');
+          const olderThanKnown = Boolean(validPr.updatedAt && existing.updatedAt && validPr.updatedAt < existing.updatedAt);
+          const provableReopen = action === 'reopened' && validPr.state === 'open' && !existing.merged
+            && Boolean(validPr.updatedAt) && (!existing.closedAt || validPr.updatedAt >= existing.closedAt);
+          if (!validPr.merged && !provableReopen && (olderThanKnown || (isTerminal && validPr.state === 'open'))) {
+            return { repoRoot, task, created: false, ignored: true, reason: 'Stale event for an earlier pull request ignored' };
+          }
+        }
+        const newestUpdate = [existing?.updatedAt, validPr.updatedAt].filter(Boolean).sort().at(-1);
         task.prs = upsertEarlierPr(task.prs, {
           ...(existing || {}), ...validPr, merged: Boolean(existing?.merged || validPr.merged),
+          ...(newestUpdate ? { updatedAt: newestUpdate } : {}),
         });
         writeTaskUnit(repoRoot, task, {
           updatedAt: isoNow(now), homeDir, exec,
