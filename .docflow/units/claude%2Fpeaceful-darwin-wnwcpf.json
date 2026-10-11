@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T10:50:30.190Z",
+  "updatedAt": "2026-10-11T10:53:17.296Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
     "title": "claude/peaceful-darwin-wnwcpf",
     "task": "Development branch: claude/peaceful-darwin-wnwcpf",
     "started": "2026-10-11T06:59:16Z",
-    "status": "In progress",
+    "status": "Completed",
     "current": "Document how to check that auto-update is working",
     "next": "",
     "history": [
@@ -172,14 +172,16 @@
     ],
     "pr": {
       "number": 22,
-      "state": "open",
+      "state": "closed",
       "title": "Document how to check that auto-update is working",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/22",
-      "merged": false,
-      "updatedAt": "2026-10-11T10:50:20Z"
+      "merged": true,
+      "mergedAt": "2026-10-11T10:53:08Z",
+      "closedAt": "2026-10-11T10:53:08Z",
+      "updatedAt": "2026-10-11T10:53:08Z"
     },
-    "completed": null,
-    "outcome": null,
+    "completed": "2026-10-11T10:53:08Z",
+    "outcome": "Merged",
     "prs": [
       {
         "number": 21,
