@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T08:03:10.786Z",
+  "updatedAt": "2026-10-11T08:05:01.191Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -8,7 +8,7 @@
     "task": "Development branch: claude/peaceful-darwin-wnwcpf",
     "started": "2026-10-11T06:59:16Z",
     "status": "Completed",
-    "current": "Release workflow: test the triggering commit and only tag it if it is still main's tip",
+    "current": "Refresh installed agent policies by file, not by agent CLI detection",
     "next": "",
     "history": [
       {
@@ -42,6 +42,10 @@
       {
         "at": "2026-10-11T08:02:57Z",
         "text": "Update selfupdate comment for automatic releases"
+      },
+      {
+        "at": "2026-10-11T08:04:51Z",
+        "text": "Release workflow: test the triggering commit and only tag it if it is still main's tip"
       }
     ],
     "commits": [
@@ -98,6 +102,12 @@
         "branch": "claude/peaceful-darwin-wnwcpf",
         "timestamp": "2026-10-11T08:02:57Z",
         "message": "Release workflow: test the triggering commit and only tag it if it is still main's tip"
+      },
+      {
+        "sha": "dd90df8cf1dd1ffa0a3650dd50149b312950fc5b",
+        "branch": "claude/peaceful-darwin-wnwcpf",
+        "timestamp": "2026-10-11T08:04:51Z",
+        "message": "Refresh installed agent policies by file, not by agent CLI detection"
       }
     ],
     "pr": {
