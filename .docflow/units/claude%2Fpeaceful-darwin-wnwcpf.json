@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T07:17:13.845Z",
+  "updatedAt": "2026-10-11T07:42:02.775Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
     "title": "claude/peaceful-darwin-wnwcpf",
     "task": "Development branch: claude/peaceful-darwin-wnwcpf",
     "started": "2026-10-11T06:59:16Z",
-    "status": "In progress",
+    "status": "Completed",
     "current": "Use actions/checkout@v4 in the release workflow, matching docflow.yml",
     "next": "",
     "history": [
@@ -62,13 +62,15 @@
     ],
     "pr": {
       "number": 16,
-      "state": "open",
+      "state": "closed",
       "title": "Add `docflow next`, stable v2 tag, one-step install/update",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/16",
-      "merged": false,
-      "updatedAt": "2026-10-11T07:17:05Z"
+      "merged": true,
+      "mergedAt": "2026-10-11T07:41:53Z",
+      "closedAt": "2026-10-11T07:41:53Z",
+      "updatedAt": "2026-10-11T07:41:53Z"
     },
-    "completed": null,
-    "outcome": null
+    "completed": "2026-10-11T07:41:53Z",
+    "outcome": "Merged"
   }
 }
