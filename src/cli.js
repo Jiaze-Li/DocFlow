@@ -10,6 +10,7 @@ import { deployRepo } from './deploy.js';
 import { globalStatus, installGlobal } from './install.js';
 import { formatIngestSummary } from './github.js';
 import { ingestPullRequest, ingestPush } from './ingest.js';
+import { selfUpdate } from './selfupdate.js';
 import { setupRepo } from './setup-repo.js';
 import { formatValidationFailure, validateCommitMessage } from './validator.js';
 
@@ -83,8 +84,10 @@ export async function runCli(argv = process.argv.slice(2), env = process.env) {
       print(syncObsidian({ cwd, homeDir }), Boolean(opts.json)); return 0;
     }
     case 'catch-up': {
+      // Update to the latest released DocFlow first; new code takes effect on the next run.
+      const update = selfUpdate({ homeDir });
       const r = catchUpAll({ homeDir });
-      print(r, true); return r.ok ? 0 : 1;
+      print({ ...r, update }, true); return r.ok ? 0 : 1;
     }
     case 'install-sync-agent': {
       print(installSyncAgent({ homeDir, ...(opts.interval ? { intervalSeconds: opts.interval } : {}) }), true); return 0;

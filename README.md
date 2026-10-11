@@ -11,6 +11,8 @@ bash ~/.docflow/app/scripts/bootstrap.sh --vault "/path/to/ObsidianVault" --proj
 
 The same script updates an existing install (`docflow update` runs it): it pulls the newest DocFlow, reinstalls the agent policy for Claude / Codex / AGY, refreshes Obsidian and, on macOS, enables the 10-minute auto-sync. Rerun it any time.
 
+**Automatic updates.** The 10-minute sync (`docflow catch-up`) also checks for a newer *released* DocFlow (the `v2` tag, moved only by the "Release stable tag" workflow) and fast-forwards this checkout to it, then reinstalls the agent policy. It never touches a checkout with local changes, one that is not on `main`, or one that is ahead of the release, and is silent when offline. The new code runs from the next sync. To turn it off: `touch ~/.docflow/auto-update-off`. `docflow update` still updates immediately.
+
 Then, in each project: `docflow init --project <name> --note "project - <name>.md"` and `docflow deploy`.
 
 ## Recording "Next"
