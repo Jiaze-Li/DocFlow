@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { syncAgentStatus, listRegisteredRepos } from './catchup.js';
-import { gateStatus, loadGlobalConfig, loadRepoConfig, loadState, resolveRepoRoot } from './core.js';
+import { loadGlobalConfig, loadRepoConfig, loadState, resolveRepoRoot } from './core.js';
 import { globalStatus } from './install.js';
 import { workflowStatus } from './github.js';
 import { commitHookStatus } from './hooks.js';
@@ -52,8 +52,6 @@ export function doctor({ cwd = process.cwd(), homeDir = os.homedir() } = {}) {
         name: 'commit_native', ok: true, info: true,
         detail: activation ? `active since ${activation.activatedAt}` : 'not activated; run `docflow setup-repo` to enable commit-native progress',
       });
-      const gate = gateStatus({ cwd: repoRoot });
-      checks.push({ name: 'repo_gate', ok: true, info: true, detail: `${gate.status}: ${gate.reason} (legacy checkpoint gate; not required for commit-native repositories)` });
     }
   }
   const obsidian = loadGlobalConfig(homeDir);

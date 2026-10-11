@@ -4,14 +4,11 @@ import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  beginRound,
-  checkpoint,
   configureGlobal,
   createBranchUnit,
   getBranchUnit,
   initRepo,
   isDevelopmentBranch,
-  loadRuntime,
   loadState,
   recordCommitProgress,
   recordPullRequestEvent,
@@ -888,13 +885,6 @@ test('200-character branch ids work through state, runtime, checkpoint, markers 
   const note = fs.readFileSync(sync.path, 'utf8');
   assert.ok(note.includes('Long branch work'));
   assert.ok(note.includes(unitMarkers(longBranch).begin));
-
-  const begun = beginRound({ cwd: repo, id: longBranch });
-  assert.equal(begun.session.taskId, longBranch);
-  const cp = checkpoint({ cwd: repo, homeDir: home, id: longBranch, current: 'Checkpointed long id' });
-  assert.equal(cp.runtime.activeTaskId, longBranch);
-  assert.equal(loadState(repo).activeTaskId, longBranch);
-  assert.equal(loadRuntime(repo).activeTaskId, longBranch);
 });
 
 test('multiline commit messages record only the first non-empty line as progress text', () => {
@@ -944,8 +934,6 @@ test('worst-case encoded 200-character ids and refs/heads/ prefixed 200-char nam
     assert.ok(getBranchUnit(repo, `refs/heads/${name}`));
     assert.ok(Buffer.byteLength(stateUnitPath(name)) < 255);
     createBranchUnit({ cwd: repo, homeDir: home, branch: `refs/heads/${name}` });
-    beginRound({ cwd: repo, id: name });
-    checkpoint({ cwd: repo, homeDir: home, id: name, current: 'Checkpoint long id' });
   }
   assert.equal(syncObsidian({ cwd: repo, homeDir: home }).updatedTaskIds.length, 2);
   assert.equal(loadState(repo).tasks.length, 2);

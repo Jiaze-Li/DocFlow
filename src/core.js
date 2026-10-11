@@ -12,7 +12,6 @@ import {
   refreshStateFromOrigin,
   lockIsStale,
   GIT_TIMEOUT_MS,
-  runtimePath,
   stateFileRevision,
   stateStoreStatus,
   resolveStateUnitPath,
@@ -24,7 +23,6 @@ export const SCHEMA_VERSION = 1;
 export const DOCFLOW_DIR = '.docflow';
 export const CONFIG_FILE = 'config.json';
 export const STATE_FILE = 'state.json';
-export const RUNTIME_FILE = 'runtime.json';
 export const PROJECT_FILE = 'project.md';
 export const MANAGED_BEGIN = '<!-- DOCFLOW:START -->';
 export const MANAGED_END = '<!-- DOCFLOW:END -->';
@@ -37,7 +35,6 @@ export const STATUS_VALUES = new Set(['In progress', 'Waiting', 'Paused', 'Compl
 // Single limit for unit ids, branch names, runtime/active ids and marker keys so state
 // written by one operation is always readable and projectable by every other.
 export const MAX_TASK_ID_LENGTH = 200;
-const TERMINAL_STATUSES = new Set(['Completed', 'Abandoned']);
 
 function clean(value, label, { required = false, max = 4000 } = {}) {
   const text = String(value ?? '').replace(/\0/g, '').trim();
@@ -95,53 +92,12 @@ function gitOutput(repoRoot, args, exec = execFileSync, { allowFailure = false }
   }
 }
 
-export function repositoryFingerprint(repoRoot, exec = execFileSync) {
-  const root = path.resolve(repoRoot);
-  const excludes = ['.', ':(exclude).docflow', ':(exclude).docflow/**'];
-  const head = gitOutput(root, ['rev-parse', 'HEAD'], exec, { allowFailure: true }).trim() || 'UNBORN';
-  const status = gitOutput(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', ...excludes], exec);
-  const unstaged = head === 'UNBORN'
-    ? gitOutput(root, ['diff', '--binary', '--', ...excludes], exec)
-    : gitOutput(root, ['diff', '--binary', 'HEAD', '--', ...excludes], exec);
-  const staged = gitOutput(root, ['diff', '--cached', '--binary', '--', ...excludes], exec);
-  const hash = createHash('sha256').update(head).update('\0').update(status).update('\0').update(unstaged).update('\0').update(staged);
-
-  for (const entry of status.split('\0').filter(Boolean)) {
-    if (!entry.startsWith('?? ')) continue;
-    const rel = entry.slice(3);
-    if (!rel || rel === DOCFLOW_DIR || rel.startsWith(`${DOCFLOW_DIR}/`)) continue;
-    const full = path.join(root, rel);
-    try {
-      const stat = fs.statSync(full);
-      if (!stat.isFile()) continue;
-      hash.update('\0UNTRACKED\0').update(rel).update('\0').update(String(stat.size)).update('\0');
-      const fd = fs.openSync(full, 'r');
-      try {
-        const buffer = Buffer.allocUnsafe(1024 * 1024);
-        let offset = 0;
-        while (offset < stat.size) {
-          const bytesRead = fs.readSync(fd, buffer, 0, Math.min(buffer.length, stat.size - offset), offset);
-          if (bytesRead <= 0) break;
-          hash.update(buffer.subarray(0, bytesRead));
-          offset += bytesRead;
-        }
-      } finally {
-        fs.closeSync(fd);
-      }
-    } catch {
-      hash.update('\0MISSING\0').update(rel);
-    }
-  }
-  return hash.digest('hex');
-}
-
 export function repoPaths(repoRoot) {
   const dir = path.join(repoRoot, DOCFLOW_DIR);
   return {
     dir,
     config: path.join(dir, CONFIG_FILE),
     state: path.join(dir, STATE_FILE),
-    runtime: path.join(dir, RUNTIME_FILE),
     project: path.join(dir, PROJECT_FILE),
   };
 }
@@ -157,10 +113,6 @@ function safeNotePath(value) {
 
 export function defaultState() {
   return { schemaVersion: SCHEMA_VERSION, activeTaskId: null, tasks: [], updatedAt: null };
-}
-
-export function defaultRuntime() {
-  return { schemaVersion: SCHEMA_VERSION, activeTaskId: null, activeSession: null, lastCheckpoint: null };
 }
 
 function normalizeIsoDate(value, label, { required = false } = {}) {
@@ -300,19 +252,6 @@ export function validateState(state) {
   return state;
 }
 
-export function validateRuntime(runtime) {
-  if (!runtime || typeof runtime !== 'object' || Array.isArray(runtime) || runtime.schemaVersion !== SCHEMA_VERSION) {
-    throw new Error('Unsupported or invalid DocFlow runtime state');
-  }
-  runtime.activeTaskId = runtime.activeTaskId == null
-    ? null
-    : clean(runtime.activeTaskId, 'runtime.activeTaskId', { required: true, max: MAX_TASK_ID_LENGTH });
-  for (const key of ['activeSession', 'lastCheckpoint']) {
-    if (runtime[key] != null && (typeof runtime[key] !== 'object' || Array.isArray(runtime[key]))) throw new Error(`Invalid ${key}`);
-  }
-  return runtime;
-}
-
 function normalizeRepoConfig(value) {
   if (!value || typeof value !== 'object' || value.schemaVersion !== SCHEMA_VERSION) throw new Error('Unsupported DocFlow repo config');
   return {
@@ -349,7 +288,6 @@ export function loadRepoConfig(repoRoot, exec = execFileSync) {
 export function loadState(repoRoot, exec = execFileSync) {
   const durableConfig = durableConfigText(repoRoot, exec);
   if (durableConfig != null) {
-    const runtime = loadRuntime(repoRoot, exec);
     const unitPaths = listStateFiles(repoRoot, DURABLE_UNITS_PREFIX, exec);
     const units = unitPaths.map((unitPath) => {
       const text = readStateFile(repoRoot, unitPath, exec);
@@ -359,7 +297,7 @@ export function loadState(repoRoot, exec = execFileSync) {
     const updatedAt = units.map((unit) => unit.updatedAt).sort().at(-1) ?? null;
     return validateState({
       schemaVersion: SCHEMA_VERSION,
-      activeTaskId: runtime.activeTaskId,
+      activeTaskId: null,
       tasks: units.map((unit) => unit.task),
       updatedAt,
     });
@@ -368,24 +306,6 @@ export function loadState(repoRoot, exec = execFileSync) {
   const { state } = repoPaths(repoRoot);
   if (!fs.existsSync(state)) throw new Error('DocFlow durable state is not initialized');
   return validateState(JSON.parse(fs.readFileSync(state, 'utf8')));
-}
-
-export function loadRuntime(repoRoot, exec = execFileSync) {
-  const runtimeFile = runtimePath(repoRoot, exec);
-  if (fs.existsSync(runtimeFile)) return validateRuntime(JSON.parse(fs.readFileSync(runtimeFile, 'utf8')));
-
-  const legacy = repoPaths(repoRoot).runtime;
-  if (fs.existsSync(legacy)) {
-    const value = validateRuntime({ activeTaskId: null, ...JSON.parse(fs.readFileSync(legacy, 'utf8')) });
-    return value;
-  }
-  return defaultRuntime();
-}
-
-function writeRuntime(repoRoot, runtime, exec = execFileSync) {
-  const normalized = validateRuntime({ ...runtime });
-  atomicWrite(runtimePath(repoRoot, exec), `${JSON.stringify(normalized, null, 2)}\n`);
-  return normalized;
 }
 
 function durableUnitText(task, updatedAt) {
@@ -431,9 +351,6 @@ export function initRepo({
     : null;
   const legacyState = fs.existsSync(paths.state)
     ? validateState(JSON.parse(fs.readFileSync(paths.state, 'utf8')))
-    : null;
-  const legacyRuntime = fs.existsSync(paths.runtime)
-    ? validateRuntime({ activeTaskId: legacyState?.activeTaskId ?? null, ...JSON.parse(fs.readFileSync(paths.runtime, 'utf8')) })
     : null;
   const legacyProject = fs.existsSync(paths.project) ? fs.readFileSync(paths.project, 'utf8') : null;
 
@@ -521,13 +438,6 @@ export function initRepo({
     migratedTaskIds.push(...legacyState.tasks.map((task) => task.id));
   }
 
-  const currentRuntimePath = runtimePath(repoRoot, exec);
-  if (!fs.existsSync(currentRuntimePath)) {
-    const migratedRuntime = legacyRuntime || defaultRuntime();
-    migratedRuntime.activeTaskId ??= legacyState?.activeTaskId ?? null;
-    writeRuntime(repoRoot, migratedRuntime, exec);
-  }
-
   const hadLegacy = fs.existsSync(paths.dir);
   if (hadLegacy) fs.rmSync(paths.dir, { recursive: true, force: true });
 
@@ -543,128 +453,11 @@ export function initRepo({
   };
 }
 
-export function startTask({
-  cwd = process.cwd(), id, title, task, current = '', next = '', status = 'In progress',
-  now = new Date(), exec = execFileSync, homeDir = os.homedir(),
-} = {}) {
-  const repoRoot = resolveRepoRoot(cwd, exec);
-  if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
-  const taskId = clean(id, 'task id', { required: true, max: MAX_TASK_ID_LENGTH });
-  const unitPath = resolveStateUnitPath(repoRoot, taskId, exec);
-  const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
-  const state = loadState(repoRoot, exec);
-  if (expectedRevision != null || state.tasks.some((entry) => entry.id === taskId)) {
-    throw new Error(`Task already exists: ${taskId}`);
-  }
-  const entry = validateTask({
-    id: taskId,
-    title: clean(title, 'task title', { required: true, max: 300 }),
-    task: clean(task, 'task description', { required: true, max: 2000 }),
-    started: isoNow(now),
-    status: canonicalStatus(status),
-    current: clean(current, 'current', { max: 2000 }),
-    next: clean(next, 'next', { max: 2000 }),
-    history: [], completed: null, outcome: null,
-  });
-  writeTaskUnit(repoRoot, entry, {
-    updatedAt: isoNow(now),
-    homeDir,
-    exec,
-    message: `DocFlow: start ${taskId}`,
-    expectedRevision,
-  });
-  const runtime = loadRuntime(repoRoot, exec);
-  runtime.activeTaskId = taskId;
-  writeRuntime(repoRoot, runtime, exec);
-  return { repoRoot, task: entry, state: loadState(repoRoot, exec) };
-}
-
 function findTask(state, id) {
   const taskId = clean(id || state.activeTaskId, 'task id', { required: true, max: MAX_TASK_ID_LENGTH });
   const task = state.tasks.find((entry) => entry.id === taskId);
   if (!task) throw new Error(`Unknown DocFlow task: ${taskId}`);
   return task;
-}
-
-export function beginRound({ cwd = process.cwd(), id, now = new Date(), exec = execFileSync } = {}) {
-  const repoRoot = resolveRepoRoot(cwd, exec);
-  const runtime = loadRuntime(repoRoot, exec);
-  const state = loadState(repoRoot, exec);
-  const task = findTask(state, id || runtime.activeTaskId);
-  if (TERMINAL_STATUSES.has(task.status)) throw new Error(`Task ${task.id} is terminal (${task.status})`);
-  const fingerprint = repositoryFingerprint(repoRoot, exec);
-  if (runtime.activeSession) {
-    if (runtime.activeSession.taskId === task.id && runtime.activeSession.baselineFingerprint === fingerprint) {
-      return { repoRoot, session: runtime.activeSession, reused: true };
-    }
-    throw new Error(`DocFlow already has an uncheckpointed round for ${runtime.activeSession.taskId}`);
-  }
-  runtime.activeTaskId = task.id;
-  runtime.activeSession = { taskId: task.id, startedAt: isoNow(now), baselineFingerprint: fingerprint };
-  writeRuntime(repoRoot, runtime, exec);
-  return { repoRoot, session: runtime.activeSession, reused: false };
-}
-
-export function checkpoint({
-  cwd = process.cwd(), id, current, next = '', status, outcome,
-  now = new Date(), exec = execFileSync, homeDir = os.homedir(),
-} = {}) {
-  const repoRoot = resolveRepoRoot(cwd, exec);
-  const runtime = loadRuntime(repoRoot, exec);
-  const explicitId = id == null ? null : clean(id, 'task id', { required: true, max: MAX_TASK_ID_LENGTH });
-  if (runtime.activeSession && explicitId && explicitId !== runtime.activeSession.taskId) {
-    throw new Error(
-      `Cannot checkpoint task ${explicitId} while an uncheckpointed round is active for ${runtime.activeSession.taskId}`,
-    );
-  }
-  const targetId = clean(
-    runtime.activeSession?.taskId || explicitId || runtime.activeTaskId,
-    'task id',
-    { required: true, max: MAX_TASK_ID_LENGTH },
-  );
-  // Capture the unit revision before loading the mutable snapshot. If another
-  // actor advances the unit before this checkpoint commits, the CAS precondition
-  // below rejects the stale write instead of silently dropping Current/History.
-  const expectedRevision = stateFileRevision(repoRoot, resolveStateUnitPath(repoRoot, targetId, exec), exec);
-  const state = loadState(repoRoot, exec);
-  const task = findTask(state, targetId);
-  const newCurrent = clean(current, 'current', { required: true, max: 2000 });
-  const newNext = clean(next, 'next', { max: 2000 });
-  const newStatus = canonicalStatus(status ?? task.status);
-  if (TERMINAL_STATUSES.has(task.status) && newStatus !== task.status) throw new Error(`Terminal task ${task.id} cannot be reopened in v1`);
-  if (task.current && task.current !== newCurrent) {
-    const last = task.history.at(-1)?.text;
-    if (last !== task.current) task.history.push({ at: isoNow(now), text: task.current });
-  }
-  task.current = newCurrent;
-  task.next = newNext;
-  task.status = newStatus;
-  if (TERMINAL_STATUSES.has(newStatus)) {
-    task.completed ??= isoNow(now);
-    task.outcome = outcome == null || !String(outcome).trim() ? task.outcome : clean(outcome, 'outcome', { max: 300 });
-  } else if (outcome != null && String(outcome).trim()) {
-    throw new Error('Outcome is only valid for a terminal task');
-  }
-
-  writeTaskUnit(repoRoot, task, {
-    updatedAt: isoNow(now),
-    homeDir,
-    exec,
-    message: `DocFlow: checkpoint ${task.id}`,
-    expectedRevision,
-  });
-
-  // Projection is part of the checkpoint transaction. If the configured
-  // Obsidian note lives inside this repository, write it before sealing the
-  // repository fingerprint so the gate observes the exact post-checkpoint tree.
-  const obsidian = syncObsidian({ cwd: repoRoot, homeDir, exec, taskId: task.id });
-
-  const fingerprint = repositoryFingerprint(repoRoot, exec);
-  runtime.activeTaskId = task.id;
-  runtime.lastCheckpoint = { taskId: task.id, at: isoNow(now), fingerprint };
-  runtime.activeSession = null;
-  const savedRuntime = writeRuntime(repoRoot, runtime, exec);
-  return { repoRoot, task, state: loadState(repoRoot, exec), runtime: savedRuntime, obsidian };
 }
 
 export function getBranchUnit(repoRoot, branch, exec = execFileSync) {
@@ -1279,29 +1072,10 @@ export function recordPullRequestEvent({
   });
 }
 
-export function gateStatus({ cwd = process.cwd(), exec = execFileSync } = {}) {
-  const repoRoot = resolveRepoRoot(cwd, exec);
-  if (!loadRepoConfig(repoRoot, exec)) {
-    return { repoRoot, enabled: false, status: 'DISABLED', reason: `repository has no DocFlow durable state on ${STATE_BRANCH}` };
-  }
-  const runtime = loadRuntime(repoRoot, exec);
-  const fingerprint = repositoryFingerprint(repoRoot, exec);
-  if (runtime.activeSession) {
-    return { repoRoot, enabled: true, status: 'PENDING', reason: `uncheckpointed round for ${runtime.activeSession.taskId}`, taskId: runtime.activeSession.taskId };
-  }
-  if (!runtime.lastCheckpoint) {
-    return { repoRoot, enabled: true, status: 'PENDING', reason: 'no successful checkpoint has been recorded yet', taskId: null };
-  }
-  if (runtime.lastCheckpoint.fingerprint !== fingerprint) {
-    return { repoRoot, enabled: true, status: 'PENDING', reason: 'repository work changed after the last checkpoint', taskId: runtime.lastCheckpoint.taskId };
-  }
-  return { repoRoot, enabled: true, status: 'READY', reason: 'current repository work matches the last successful checkpoint', taskId: runtime.lastCheckpoint.taskId, checkpointAt: runtime.lastCheckpoint.at };
-}
-
 export function projectStatus({ cwd = process.cwd(), exec = execFileSync } = {}) {
   const repoRoot = resolveRepoRoot(cwd, exec);
   const config = loadRepoConfig(repoRoot, exec);
-  if (!config) return { repoRoot, enabled: false, gate: gateStatus({ cwd: repoRoot, exec }) };
+  if (!config) return { repoRoot, enabled: false };
   const state = loadState(repoRoot, exec);
   return {
     repoRoot,
@@ -1309,7 +1083,6 @@ export function projectStatus({ cwd = process.cwd(), exec = execFileSync } = {})
     config,
     state,
     stateStore: stateStoreStatus(repoRoot, exec),
-    gate: gateStatus({ cwd: repoRoot, exec }),
   };
 }
 

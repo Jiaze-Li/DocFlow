@@ -1,5 +1,7 @@
 # DocFlow v1 contract
 
+> Historical. The checkpoint and gate parts of this contract were removed (see `docs/LEGACY_V1.md`). The persistence on `docflow-state`, the unit-per-file layout, compare-and-swap writes and the Obsidian block projection described here still apply.
+
 ## Goal
 
 Provide one cross-agent development-documentation workflow that keeps repository-owned version/task progress current and exposes it read-only in Obsidian.

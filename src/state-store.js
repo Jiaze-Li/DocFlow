@@ -177,11 +177,6 @@ export function listStateFiles(repoRoot, prefix, exec = execFileSync) {
   return out.split('\n').map((line) => line.trim()).filter(Boolean);
 }
 
-export function runtimePath(repoRoot, exec = execFileSync) {
-  const raw = git(repoRoot, ['rev-parse', '--git-path', 'docflow/runtime.json'], exec).trim();
-  return path.isAbsolute(raw) ? raw : path.resolve(repoRoot, raw);
-}
-
 function commonGitDir(repoRoot, exec = execFileSync) {
   const raw = git(repoRoot, ['rev-parse', '--git-common-dir'], exec).trim();
   return path.isAbsolute(raw) ? raw : path.resolve(repoRoot, raw);

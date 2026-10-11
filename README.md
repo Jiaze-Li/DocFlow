@@ -30,7 +30,7 @@ Projects and Macs follow `Jiaze-Li/DocFlow/action@v2`, a tag that moves automati
 
 ## How it works
 
-A development commit is the progress fact. No `begin` / `checkpoint` / `gate` call is needed for correctness.
+A development commit is the progress fact. Nothing else has to be called for the progress to be recorded.
 
 ```text
 git commit  ->  commit-msg hook validates the subject (deterministic, no model)

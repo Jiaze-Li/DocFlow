@@ -4,12 +4,12 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MANAGED_BEGIN, MANAGED_END, configureGlobal, initRepo, renderTaskUnit, startTask, syncObsidian, upsertManagedUnit, sortManagedUnitsByStarted } from '../src/core.js';
+import { MANAGED_BEGIN, MANAGED_END, configureGlobal, initRepo, renderTaskUnit, syncObsidian, upsertManagedUnit, sortManagedUnitsByStarted } from '../src/core.js';
 import { AGENT_LABEL, catchUpAll, installSyncAgent, listRegisteredRepos, registerRepo, stableNodePath, syncAgentStatus, uninstallSyncAgent } from '../src/catchup.js';
 import { ingestPush } from '../src/ingest.js';
 import { setupRepo } from '../src/setup-repo.js';
 import { doctor } from '../src/doctor.js';
-import { cloneGitRepo, tempBareGitRepo, tempGitRepo, tempHome } from './helpers.js';
+import { cloneGitRepo, seedUnit, tempBareGitRepo, tempGitRepo, tempHome } from './helpers.js';
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'docflow.js');
 const ZERO = '0'.repeat(40);
@@ -266,7 +266,7 @@ test('v1 units without commits render exactly as before', () => {
   const vault = path.join(home, 'Vault');
   configureGlobal({ homeDir: home, vault, projectFolder: '02 Projects' });
   initRepo({ cwd: repo, homeDir: home, projectName: 'Legacy', obsidianNote: 'project - legacy.md' });
-  startTask({ cwd: repo, homeDir: home, id: 'v1', title: 'Legacy task', task: 'Old flow.', current: 'Legacy current.', next: 'Legacy next.' });
+  seedUnit(repo, { id: 'v1', title: 'Legacy task', task: 'Old flow.', current: 'Legacy current.', next: 'Legacy next.' }, { homeDir: home });
   syncObsidian({ cwd: repo, homeDir: home });
   const note = fs.readFileSync(path.join(vault, '02 Projects', 'project - legacy.md'), 'utf8');
   assert.match(note, /\*\*Current\*\*\nLegacy current\./);
