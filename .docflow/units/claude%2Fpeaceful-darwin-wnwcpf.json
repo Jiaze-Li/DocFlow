@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T08:07:17.814Z",
+  "updatedAt": "2026-10-11T08:23:09.199Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -8,7 +8,7 @@
     "task": "Development branch: claude/peaceful-darwin-wnwcpf",
     "started": "2026-10-11T06:59:16Z",
     "status": "Completed",
-    "current": "Refresh installed agent policies by file, not by agent CLI detection",
+    "current": "Remove the v1 checkpoint workflow",
     "next": "",
     "history": [
       {
@@ -46,6 +46,10 @@
       {
         "at": "2026-10-11T08:04:51Z",
         "text": "Release workflow: test the triggering commit and only tag it if it is still main's tip"
+      },
+      {
+        "at": "2026-10-11T08:22:59Z",
+        "text": "Refresh installed agent policies by file, not by agent CLI detection"
       }
     ],
     "commits": [
@@ -108,6 +112,12 @@
         "branch": "claude/peaceful-darwin-wnwcpf",
         "timestamp": "2026-10-11T08:04:51Z",
         "message": "Refresh installed agent policies by file, not by agent CLI detection"
+      },
+      {
+        "sha": "95e954fffed92515cd74eac0428acd77b92dd4e2",
+        "branch": "claude/peaceful-darwin-wnwcpf",
+        "timestamp": "2026-10-11T08:22:59Z",
+        "message": "Remove the v1 checkpoint workflow"
       }
     ],
     "pr": {
