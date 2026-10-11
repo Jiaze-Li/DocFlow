@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T07:07:52.337Z",
+  "updatedAt": "2026-10-11T07:07:53.816Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -46,7 +46,7 @@
       "title": "Add `docflow next`, stable v2 tag, one-step install/update",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/16",
       "merged": false,
-      "updatedAt": "2026-10-11T07:03:32Z"
+      "updatedAt": "2026-10-11T07:07:44Z"
     },
     "completed": null,
     "outcome": null
