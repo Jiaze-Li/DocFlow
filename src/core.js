@@ -1502,6 +1502,53 @@ export function upsertManagedUnit(existing, task, updatedAt = null) {
   return `${text.slice(0, bounds.innerStart)}${appended}${text.slice(bounds.endStart)}`;
 }
 
+/**
+ * Order existing generated unit blocks by branch start time, newest first.
+ * Move blocks rather than re-rendering them: a sync of one task must not
+ * overwrite another task's already-projected content.
+ * Leave unexpected content inside the managed container untouched.
+ */
+export function sortManagedUnitsByStarted(existing, tasks) {
+  const text = String(existing ?? '');
+  const bounds = managedBounds(text);
+  const inner = text.slice(bounds.innerStart, bounds.endStart);
+  const starts = [...inner.matchAll(/<!-- DOCFLOW:UNIT:([^:\n]+):START -->/g)];
+  if (starts.length < 2) return text;
+
+  const startTimes = new Map(tasks.map((task) => [
+    unitMarkerKey(task.id),
+    Number.isFinite(Date.parse(task.started)) ? Date.parse(task.started) : Number.NEGATIVE_INFINITY,
+  ]));
+  const blocks = [];
+  for (let index = 0; index < starts.length; index += 1) {
+    const match = starts[index];
+    const nextStart = starts[index + 1]?.index ?? inner.length;
+    const endMarker = `<!-- DOCFLOW:UNIT:${match[1]}:END -->`;
+    const endStart = inner.indexOf(endMarker, match.index + match[0].length);
+    if (endStart < 0 || endStart >= nextStart) {
+      throw new Error(`Refusing to reorder malformed DocFlow unit block for ${match[1]}`);
+    }
+    const end = endStart + endMarker.length;
+    // Only generated unit blocks and their whitespace separators can be moved.
+    // Legacy/unmanaged text inside the container is never discarded.
+    if (inner.slice(end, nextStart).trim()) return text;
+    blocks.push({ key: match[1], content: inner.slice(match.index, end) });
+  }
+  const ordered = [...blocks].sort((a, b) => (
+    (startTimes.get(b.key) ?? Number.NEGATIVE_INFINITY)
+    - (startTimes.get(a.key) ?? Number.NEGATIVE_INFINITY)
+    || a.key.localeCompare(b.key)
+  ));
+  if (blocks.every((block, index) => block.key === ordered[index].key)) return text;
+  const prefix = inner.slice(0, starts[0].index);
+  const last = blocks.at(-1);
+  const lastEndMarker = `<!-- DOCFLOW:UNIT:${last.key}:END -->`;
+  const lastEnd = inner.lastIndexOf(lastEndMarker) + lastEndMarker.length;
+  const suffix = inner.slice(lastEnd);
+  const reordered = `${prefix}${ordered.map((block) => block.content).join('\n\n')}${suffix}`;
+  return `${text.slice(0, bounds.innerStart)}${reordered}${text.slice(bounds.endStart)}`;
+}
+
 function sleepSync(milliseconds) {
   const buffer = new SharedArrayBuffer(4);
   Atomics.wait(new Int32Array(buffer), 0, 0, milliseconds);
@@ -1615,6 +1662,8 @@ export function syncObsidian({
       const updatedAt = durableText == null ? null : parseDurableUnit(durableText, unitPath).updatedAt;
       next = upsertManagedUnit(next, task, updatedAt);
     }
+
+    next = sortManagedUnitsByStarted(next, state.tasks);
 
     // Identical content is never rewritten: no new mtime, no churn for Obsidian/iCloud/Spotlight.
     const unchanged = !created && next === existing;
