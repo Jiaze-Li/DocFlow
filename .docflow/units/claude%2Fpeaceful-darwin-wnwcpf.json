@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T07:03:46.063Z",
+  "updatedAt": "2026-10-11T07:07:52.337Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -8,12 +8,16 @@
     "task": "Development branch: claude/peaceful-darwin-wnwcpf",
     "started": "2026-10-11T06:59:16Z",
     "status": "In progress",
-    "current": "Bootstrap installs a real docflow command on PATH",
+    "current": "Treat text after a bare -- as the next-step text",
     "next": "",
     "history": [
       {
         "at": "2026-10-11T07:03:29Z",
         "text": "Add docflow next, stable v2 action tag, one-step install/update script"
+      },
+      {
+        "at": "2026-10-11T07:07:41Z",
+        "text": "Bootstrap installs a real docflow command on PATH"
       }
     ],
     "commits": [
@@ -28,6 +32,12 @@
         "branch": "claude/peaceful-darwin-wnwcpf",
         "timestamp": "2026-10-11T07:03:29Z",
         "message": "Bootstrap installs a real docflow command on PATH"
+      },
+      {
+        "sha": "8e3c7c9f21e21666f9f8cb2ede32347bb774c066",
+        "branch": "claude/peaceful-darwin-wnwcpf",
+        "timestamp": "2026-10-11T07:07:41Z",
+        "message": "Treat text after a bare -- as the next-step text"
       }
     ],
     "pr": {
