@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T08:47:23.674Z",
+  "updatedAt": "2026-10-11T08:52:22.971Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -8,7 +8,7 @@
     "task": "Development branch: claude/peaceful-darwin-wnwcpf",
     "started": "2026-10-11T06:59:16Z",
     "status": "Completed",
-    "current": "Show every pull request of a reused branch",
+    "current": "Apply event ordering to archived pull requests",
     "next": "",
     "history": [
       {
@@ -62,6 +62,10 @@
       {
         "at": "2026-10-11T08:47:02Z",
         "text": "Remove the release workflow (step 2 of dropping v2)"
+      },
+      {
+        "at": "2026-10-11T08:52:11Z",
+        "text": "Show every pull request of a reused branch"
       }
     ],
     "commits": [
@@ -148,6 +152,12 @@
         "branch": "claude/peaceful-darwin-wnwcpf",
         "timestamp": "2026-10-11T08:47:02Z",
         "message": "Show every pull request of a reused branch"
+      },
+      {
+        "sha": "2a3e3a6fd65fb7927ae26cc66417ed15ced63dfb",
+        "branch": "claude/peaceful-darwin-wnwcpf",
+        "timestamp": "2026-10-11T08:52:11Z",
+        "message": "Apply event ordering to archived pull requests"
       }
     ],
     "pr": {
