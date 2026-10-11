@@ -1,5 +1,5 @@
 // Keep this DocFlow checkout on the latest *released* version. A release is the stable `v2`
-// tag, which only moves when the owner runs the "Release stable tag" workflow (tests first).
+// tag, which the "Release stable tag" workflow moves after each tested push to main.
 // Conservative by design: fast-forward only, never touches local changes, never runs
 // anything it just downloaded in the same process, and is silent when offline.
 import { execFileSync } from 'node:child_process';
