@@ -91,6 +91,12 @@ The commit subject rules (`docflow validate-message --message "..."`): non-empty
 Legacy v1 commands are documented in [`docs/LEGACY_V1.md`](docs/LEGACY_V1.md).
 
 
+## Checking that auto-update works
+
+- `git -C <your DocFlow folder> log --oneline -1` shows the newest merged pull request once the Mac has caught up (within about 10 minutes of a merge).
+- `ls -l ~/.docflow/logs/catchup.log` shows when the background sync last ran.
+- `tail -n 30 ~/.docflow/logs/catchup.log` shows what the last run decided; the `update` entry explains any skip (local changes in the DocFlow folder, not on `main`, offline).
+
 ## Recovery boundaries
 
 - **Activation anchors.** `setup-repo` records each pre-existing branch's tip SHA at activation time (`tips` in the activation record). If the first post-activation run for such a branch is lost, the next push or PR event recovers everything after that anchor; pre-activation history is never backfilled. Activation records written before `tips` existed keep the old forward-only behaviour and report `recovery.anchored: false` (also a GitHub warning annotation) because a lost earlier run cannot be reconstructed after the fact. The same is reported when the anchor is no longer an ancestor of the pushed tip (rewritten history).
