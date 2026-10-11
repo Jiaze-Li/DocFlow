@@ -1,6 +1,9 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
-import { beginRound, checkpoint, configureGlobal, gateStatus, initRepo, projectStatus, resolveRepoRoot, startTask, syncObsidian } from './core.js';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { beginRound, checkpoint, configureGlobal, gateStatus, initRepo, projectStatus, resolveRepoRoot, setBranchNext, startTask, syncObsidian } from './core.js';
 import { catchUpAll, catchUpRepo, installSyncAgent, registerRepo, uninstallSyncAgent } from './catchup.js';
 import { doctor, formatDoctor } from './doctor.js';
 import { deployRepo } from './deploy.js';
@@ -31,7 +34,7 @@ function print(value, json = false) {
 }
 
 function help() {
-  return `DocFlow\n\nCommands:\n  init --project <name> [--summary <text>] [--note <file>]\n  configure --vault <path> [--project-folder "02 Projects"]\n  start --id <id> --title <title> --task <description> [--current <text>] [--next <text>]\n  begin [--id <task-id>]\n  checkpoint [--id <task-id>] --current <text> [--next <text>] [--status <status>] [--outcome <text>]\n  gate [--json]\n  status [--json]\n  sync [--refresh] [--json]\n  catch-up                       refresh + project every registered repo (what the LaunchAgent runs)\n  install-sync-agent [--interval <seconds>]   write the macOS LaunchAgent (does not load it)\n  uninstall-sync-agent\n  validate-message (--file <path> | --message <text>)\n  setup-repo [--action-ref <ref>]
+  return `DocFlow\n\nCommands:\n  init --project <name> [--summary <text>] [--note <file>]\n  configure --vault <path> [--project-folder "02 Projects"]\n  start --id <id> --title <title> --task <description> [--current <text>] [--next <text>]\n  begin [--id <task-id>]\n  checkpoint [--id <task-id>] --current <text> [--next <text>] [--status <status>] [--outcome <text>]\n  gate [--json]\n  status [--json]\n  sync [--refresh] [--json]\n  catch-up                       refresh + project every registered repo (what the LaunchAgent runs)\n  install-sync-agent [--interval <seconds>]   write the macOS LaunchAgent (does not load it)\n  uninstall-sync-agent\n  update                         pull the newest DocFlow and reinstall policy + sync (same as scripts/bootstrap.sh)\n  next "<text>" [--branch <name>] [--clear]   record the next step for this branch (shown in Obsidian)\n  validate-message (--file <path> | --message <text>)\n  setup-repo [--action-ref <ref>]
   deploy [--action-ref <ref>] [--json]  activate and install the GitHub workflow on existing branches\n  ingest-github --event-name <push|pull_request> --event-path <file>\n  ingest-push --ref <refs/heads/x> --before <sha> --after <sha>\n  doctor\n  install-global\n  global-status\n\nCommon: --cwd <repo-path>`;
 }
 
@@ -86,6 +89,22 @@ export async function runCli(argv = process.argv.slice(2), env = process.env) {
     }
     case 'uninstall-sync-agent': {
       print(uninstallSyncAgent({ homeDir }), true); return 0;
+    }
+    case 'update': {
+      const script = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'bootstrap.sh');
+      execFileSync('bash', [script], { stdio: 'inherit' });
+      return 0;
+    }
+    case 'next': {
+      const root = resolveRepoRoot(cwd);
+      const branch = opts.branch && opts.branch !== true
+        ? opts.branch
+        : execFileSync('git', ['-C', root, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
+      const text = opts.clear ? '' : (opts.text && opts.text !== true ? opts.text : opts._.join(' '));
+      if (!opts.clear && !String(text).trim()) throw new Error('next needs the next step text, or --clear');
+      const result = setBranchNext({ cwd: root, branch, next: text, homeDir });
+      const sync = syncObsidian({ cwd: root, homeDir, taskId: result.task.id });
+      print({ branch: result.task.branch, next: result.task.next, changed: result.changed, obsidian: sync }, Boolean(opts.json)); return 0;
     }
     case 'validate-message': {
       const text = opts.file ? fs.readFileSync(opts.file, 'utf8') : opts.message;

@@ -673,6 +673,36 @@ export function getBranchUnit(repoRoot, branch, exec = execFileSync) {
   return state.tasks.find((t) => t.branch === branchName || (t.id === branchName && t.branch == null)) || null;
 }
 
+/**
+ * Record a person's (or agent's) stated next step for a branch unit. Next is never inferred
+ * from commits: it exists only when explicitly written here. An empty value clears it.
+ * The unit must already exist (it is created by the first ingested commit).
+ */
+export function setBranchNext({
+  cwd = process.cwd(), branch, next = '', now = new Date(), exec = execFileSync, homeDir = os.homedir(),
+} = {}) {
+  const repoRoot = resolveRepoRoot(cwd, exec);
+  if (!loadRepoConfig(repoRoot, exec)) throw new Error('DocFlow is not enabled in this repository');
+  const branchName = normalizeBranchName(branch);
+  const text = clean(next, 'next', { max: 2000 });
+  const unitPath = resolveStateUnitPath(repoRoot, branchName, exec);
+
+  return withStateLock(repoRoot, homeDir, exec, () => {
+    refreshStateFromOrigin({ repoRoot, homeDir, exec });
+    const expectedRevision = stateFileRevision(repoRoot, unitPath, exec);
+    const task = getBranchUnit(repoRoot, branchName, exec);
+    if (!task) {
+      throw new Error(`No DocFlow progress recorded yet for branch '${branchName}'. Push at least one commit first; the unit is created from the first ingested commit.`);
+    }
+    if (task.next === text) return { repoRoot, task, changed: false };
+    task.next = text;
+    writeTaskUnit(repoRoot, task, {
+      updatedAt: isoNow(now), homeDir, exec, message: `DocFlow: set next for ${task.id}`, expectedRevision,
+    });
+    return { repoRoot, task, changed: true };
+  });
+}
+
 export function findCommitInState(repoRoot, sha, exec = execFileSync) {
   const targetSha = String(sha ?? '').trim().toLowerCase();
   if (!targetSha) return null;

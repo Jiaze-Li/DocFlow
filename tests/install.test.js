@@ -22,7 +22,7 @@ test('global install writes one shared policy for Claude, Codex and AGY and is i
     const text = fs.readFileSync(file, 'utf8');
     assert.equal(text.split(POLICY_BEGIN).length - 1, 1);
     assert.equal(text.split(POLICY_END).length - 1, 1);
-    assert.match(text, /History is factual and append-only/);
+    assert.match(text, /docflow.js" next /);
     assert.match(text, /\/opt\/docflow\/bin\/docflow\.js/);
   }
 });
