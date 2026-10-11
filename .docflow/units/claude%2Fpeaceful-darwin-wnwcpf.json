@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T07:11:39.706Z",
+  "updatedAt": "2026-10-11T07:17:11.940Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -8,7 +8,7 @@
     "task": "Development branch: claude/peaceful-darwin-wnwcpf",
     "started": "2026-10-11T06:59:16Z",
     "status": "In progress",
-    "current": "Refresh durable state before next checks repository configuration",
+    "current": "Use actions/checkout@v4 in the release workflow, matching docflow.yml",
     "next": "",
     "history": [
       {
@@ -22,6 +22,10 @@
       {
         "at": "2026-10-11T07:11:27Z",
         "text": "Treat text after a bare -- as the next-step text"
+      },
+      {
+        "at": "2026-10-11T07:17:01Z",
+        "text": "Refresh durable state before next checks repository configuration"
       }
     ],
     "commits": [
@@ -48,6 +52,12 @@
         "branch": "claude/peaceful-darwin-wnwcpf",
         "timestamp": "2026-10-11T07:11:27Z",
         "message": "Refresh durable state before next checks repository configuration"
+      },
+      {
+        "sha": "6dae8b3ae482ac705176f7c06c242556a7ff4278",
+        "branch": "claude/peaceful-darwin-wnwcpf",
+        "timestamp": "2026-10-11T07:17:01Z",
+        "message": "Use actions/checkout@v4 in the release workflow, matching docflow.yml"
       }
     ],
     "pr": {
