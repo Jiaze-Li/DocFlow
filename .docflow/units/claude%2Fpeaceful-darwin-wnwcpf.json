@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T08:26:24.404Z",
+  "updatedAt": "2026-10-11T08:28:13.271Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -8,7 +8,7 @@
     "task": "Development branch: claude/peaceful-darwin-wnwcpf",
     "started": "2026-10-11T06:59:16Z",
     "status": "Completed",
-    "current": "Remove the v1 checkpoint workflow",
+    "current": "Follow main instead of the v2 tag (step 1 of dropping v2)",
     "next": "",
     "history": [
       {
@@ -50,6 +50,10 @@
       {
         "at": "2026-10-11T08:22:59Z",
         "text": "Refresh installed agent policies by file, not by agent CLI detection"
+      },
+      {
+        "at": "2026-10-11T08:28:02Z",
+        "text": "Remove the v1 checkpoint workflow"
       }
     ],
     "commits": [
@@ -118,6 +122,12 @@
         "branch": "claude/peaceful-darwin-wnwcpf",
         "timestamp": "2026-10-11T08:22:59Z",
         "message": "Remove the v1 checkpoint workflow"
+      },
+      {
+        "sha": "ace107734d3ec252a1f89dc2ae6535b06550c49e",
+        "branch": "claude/peaceful-darwin-wnwcpf",
+        "timestamp": "2026-10-11T08:28:02Z",
+        "message": "Follow main instead of the v2 tag (step 1 of dropping v2)"
       }
     ],
     "pr": {
