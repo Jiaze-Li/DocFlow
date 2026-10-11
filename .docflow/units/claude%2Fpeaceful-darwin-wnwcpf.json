@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T08:52:25.316Z",
+  "updatedAt": "2026-10-11T09:17:38.859Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -162,13 +162,13 @@
     ],
     "pr": {
       "number": 21,
-      "state": "open",
+      "state": "closed",
       "title": "Show every pull request of a reused branch",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/21",
       "merged": true,
-      "mergedAt": "2026-10-11T08:33:34Z",
-      "closedAt": "2026-10-11T08:33:34Z",
-      "updatedAt": "2026-10-11T08:52:15Z"
+      "mergedAt": "2026-10-11T09:17:26Z",
+      "closedAt": "2026-10-11T09:17:26Z",
+      "updatedAt": "2026-10-11T09:17:26Z"
     },
     "completed": "2026-10-11T07:41:53Z",
     "outcome": "Merged"
