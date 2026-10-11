@@ -18,7 +18,7 @@ If it reports `enabled: false`, DocFlow is not enabled for the repository and no
 Obsidian shows a **Next** line per branch, and only you or the user can supply it; it is never inferred from commits.
 
 - At the end of every meaningful round (after pushing), run:
-  `{{DOCFLOW_CLI}} next --cwd <repo> "<one short sentence: the concrete next step>"`
+  `{{DOCFLOW_CLI}} next --cwd <repo> -- "<one short sentence: the concrete next step>"`
 - Whenever the user tells you what they want to do next, record their intent the same way, in their own words.
 - When the branch is finished and nothing is pending: `{{DOCFLOW_CLI}} next --cwd <repo> --clear`.
 - Write for a human reading a project note: plain language, no file/function names, one sentence.

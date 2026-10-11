@@ -51,3 +51,11 @@ test('docflow next projects into the Obsidian note and --clear removes it', () =
   run('next', '--clear');
   assert.doesNotMatch(fs.readFileSync(note, 'utf8'), /### Next/);
 });
+
+test('docflow next keeps text that starts with -- when given after a bare --', () => {
+  const { repo, home, record, note } = setup();
+  record('Add the settings page', 1);
+  execFileSync('node', [CLI, 'next', '--cwd', repo, '--', '--experimental flag support'], { encoding: 'utf8', env: { ...process.env, HOME: home } });
+  assert.match(fs.readFileSync(note, 'utf8'), /### Next\n--experimental flag support/);
+  assert.equal(loadState(repo).tasks[0].next, '--experimental flag support');
+});

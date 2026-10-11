@@ -17,6 +17,8 @@ function parseOptions(args) {
   const out = { _: [] };
   for (let i = 0; i < args.length; i += 1) {
     const item = args[i];
+    // A bare `--` ends option parsing: everything after it is positional text, even if it starts with `--`.
+    if (item === '--') { out._.push(...args.slice(i + 1)); break; }
     if (!item.startsWith('--')) { out._.push(item); continue; }
     const eq = item.indexOf('=');
     if (eq > 2) { out[item.slice(2, eq)] = item.slice(eq + 1); continue; }
@@ -34,7 +36,7 @@ function print(value, json = false) {
 }
 
 function help() {
-  return `DocFlow\n\nCommands:\n  init --project <name> [--summary <text>] [--note <file>]\n  configure --vault <path> [--project-folder "02 Projects"]\n  start --id <id> --title <title> --task <description> [--current <text>] [--next <text>]\n  begin [--id <task-id>]\n  checkpoint [--id <task-id>] --current <text> [--next <text>] [--status <status>] [--outcome <text>]\n  gate [--json]\n  status [--json]\n  sync [--refresh] [--json]\n  catch-up                       refresh + project every registered repo (what the LaunchAgent runs)\n  install-sync-agent [--interval <seconds>]   write the macOS LaunchAgent (does not load it)\n  uninstall-sync-agent\n  update                         pull the newest DocFlow and reinstall policy + sync (same as scripts/bootstrap.sh)\n  next "<text>" [--branch <name>] [--clear]   record the next step for this branch (shown in Obsidian)\n  validate-message (--file <path> | --message <text>)\n  setup-repo [--action-ref <ref>]
+  return `DocFlow\n\nCommands:\n  init --project <name> [--summary <text>] [--note <file>]\n  configure --vault <path> [--project-folder "02 Projects"]\n  start --id <id> --title <title> --task <description> [--current <text>] [--next <text>]\n  begin [--id <task-id>]\n  checkpoint [--id <task-id>] --current <text> [--next <text>] [--status <status>] [--outcome <text>]\n  gate [--json]\n  status [--json]\n  sync [--refresh] [--json]\n  catch-up                       refresh + project every registered repo (what the LaunchAgent runs)\n  install-sync-agent [--interval <seconds>]   write the macOS LaunchAgent (does not load it)\n  uninstall-sync-agent\n  update                         pull the newest DocFlow and reinstall policy + sync (same as scripts/bootstrap.sh)\n  next [--branch <name>] [--clear] -- "<text>"   record the next step for this branch (shown in Obsidian)\n  validate-message (--file <path> | --message <text>)\n  setup-repo [--action-ref <ref>]
   deploy [--action-ref <ref>] [--json]  activate and install the GitHub workflow on existing branches\n  ingest-github --event-name <push|pull_request> --event-path <file>\n  ingest-push --ref <refs/heads/x> --before <sha> --after <sha>\n  doctor\n  install-global\n  global-status\n\nCommon: --cwd <repo-path>`;
 }
 

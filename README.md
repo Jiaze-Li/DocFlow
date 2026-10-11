@@ -18,7 +18,7 @@ Then, in each project: `docflow init --project <name> --note "project - <name>.m
 Obsidian shows a **Next** line per branch. It is never guessed from commits. Agents record it for you at the end of each round (the installed policy tells them to), or you tell the agent what you want to do next and it records that:
 
 ```bash
-docflow next "Wire up dark mode"      # current branch
+docflow next -- "Wire up dark mode"   # current branch
 docflow next --clear                  # nothing pending
 ```
 
