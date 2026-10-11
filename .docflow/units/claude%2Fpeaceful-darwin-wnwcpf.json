@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T08:02:09.490Z",
+  "updatedAt": "2026-10-11T08:03:10.786Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -8,7 +8,7 @@
     "task": "Development branch: claude/peaceful-darwin-wnwcpf",
     "started": "2026-10-11T06:59:16Z",
     "status": "Completed",
-    "current": "Update selfupdate comment for automatic releases",
+    "current": "Release workflow: test the triggering commit and only tag it if it is still main's tip",
     "next": "",
     "history": [
       {
@@ -38,6 +38,10 @@
       {
         "at": "2026-10-11T08:01:55Z",
         "text": "Release the stable v2 tag automatically on every tested push to main"
+      },
+      {
+        "at": "2026-10-11T08:02:57Z",
+        "text": "Update selfupdate comment for automatic releases"
       }
     ],
     "commits": [
@@ -88,6 +92,12 @@
         "branch": "claude/peaceful-darwin-wnwcpf",
         "timestamp": "2026-10-11T08:01:55Z",
         "message": "Update selfupdate comment for automatic releases"
+      },
+      {
+        "sha": "deb28d376d350feb584deaf3e6bd0ec47cea4b0b",
+        "branch": "claude/peaceful-darwin-wnwcpf",
+        "timestamp": "2026-10-11T08:02:57Z",
+        "message": "Release workflow: test the triggering commit and only tag it if it is still main's tip"
       }
     ],
     "pr": {
