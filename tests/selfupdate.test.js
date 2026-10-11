@@ -15,20 +15,16 @@ function world() {
   git(dev, 'remote', 'add', 'origin', remote);
   git(dev, 'push', '-q', 'origin', 'main');
   execFileSync('git', ['--git-dir', remote, 'symbolic-ref', 'HEAD', 'refs/heads/main']);
-  git(dev, 'tag', 'v2');
-  git(dev, 'push', '-q', 'origin', 'v2');
   const app = cloneGitRepo(remote);
   const release = (message) => {
     git(dev, 'commit', '--allow-empty', '-q', '--no-verify', '-m', message);
     git(dev, 'push', '-q', 'origin', 'main');
-    git(dev, 'tag', '-f', 'v2');
-    git(dev, 'push', '-q', '-f', 'origin', 'v2');
   };
   return { dev, app, release, home: tempHome(), policy: () => { policy.calls += 1; } };
 }
 const policy = { calls: 0 };
 
-test('fast-forwards to the released v2 tag and reinstalls the policy', () => {
+test('fast-forwards to the latest main and reinstalls the policy', () => {
   const w = world();
   policy.calls = 0;
   w.release('Released change');
@@ -36,17 +32,7 @@ test('fast-forwards to the released v2 tag and reinstalls the policy', () => {
   assert.equal(result.updated, true);
   assert.equal(git(w.app, 'rev-parse', 'HEAD'), git(w.dev, 'rev-parse', 'HEAD'));
   assert.equal(policy.calls, 1);
-  assert.equal(selfUpdate({ appDir: w.app, homeDir: w.home, reinstallPolicy: w.policy }).reason, 'already on the latest release');
-});
-
-test('unreleased commits on main are NOT picked up', () => {
-  const w = world();
-  git(w.dev, 'commit', '--allow-empty', '-q', '--no-verify', '-m', 'Not released yet');
-  git(w.dev, 'push', '-q', 'origin', 'main');
-  const before = git(w.app, 'rev-parse', 'HEAD');
-  const result = selfUpdate({ appDir: w.app, homeDir: w.home, reinstallPolicy: w.policy });
-  assert.equal(result.updated, false);
-  assert.equal(git(w.app, 'rev-parse', 'HEAD'), before);
+  assert.equal(selfUpdate({ appDir: w.app, homeDir: w.home, reinstallPolicy: w.policy }).reason, 'already on the latest version');
 });
 
 test('local changes, a non-main branch, and the opt-out file all block the update', () => {
