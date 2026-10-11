@@ -1,6 +1,6 @@
 # Legacy v1 checkpoint workflow
 
-> Deprecated. New repositories use commit-native progress (see the README). The v1 commands (`start`, `begin`, `checkpoint`, `gate`) still work and v1 units still render, so existing notes keep updating, but agents are no longer instructed to use them.
+> Historical. The v1 checkpoint commands (`start`, `begin`, `checkpoint`, `gate`) and the per-worktree runtime they used have been **removed**; new progress is recorded from Git commits (see the README). Units that v1 created are still read and rendered into Obsidian unchanged, and `init` still migrates a pre-durable worktree-local `.docflow/state.json`. Everything below describes how v1 worked and is kept for reference only.
 
 ## Model
 

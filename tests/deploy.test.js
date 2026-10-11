@@ -4,10 +4,10 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { deployRepo } from '../src/deploy.js';
-import { initRepo, loadState, startTask } from '../src/core.js';
+import { initRepo, loadState } from '../src/core.js';
 import { WORKFLOW_FILE, renderWorkflow } from '../src/github.js';
 import { readActivation } from '../src/ingest.js';
-import { tempBareGitRepo, tempGitRepo, tempHome } from './helpers.js';
+import { seedUnit, tempBareGitRepo, tempGitRepo, tempHome } from './helpers.js';
 
 const git = (repo, ...args) => String(execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' })).trim();
 const head = (repo) => git(repo, 'rev-parse', 'HEAD');
@@ -27,10 +27,7 @@ function fixture() {
   git(repo, 'push', '-q', '-u', 'origin', 'main');
   execFileSync('git', ['--git-dir', remote, 'symbolic-ref', 'HEAD', 'refs/heads/main']);
   initRepo({ cwd: repo, homeDir: home, projectName: 'Deploy', obsidianNote: 'project - deploy.md' });
-  startTask({
-    cwd: repo, homeDir: home, id: 'legacy', title: 'Legacy progress',
-    task: 'Preserve existing durable unit', current: 'Started before deployment',
-  });
+  seedUnit(repo, { id: 'legacy', title: 'Legacy progress', task: 'Preserve existing durable unit', current: 'Started before deployment' }, { homeDir: home });
   git(repo, 'checkout', '-q', '-b', 'feat/afm');
   git(repo, 'commit', '-q', '--allow-empty', '-m', 'Implement initial AFM work');
   git(repo, 'push', '-q', '-u', 'origin', 'feat/afm');

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { checkpoint, configureGlobal, initRepo, startTask, syncObsidian } from '../src/core.js';
+import { configureGlobal, initRepo, syncObsidian } from '../src/core.js';
 import { lockIsStale, refreshStateFromOrigin, withStateLock } from '../src/state-store.js';
-import { tempBareGitRepo, tempGitRepo, tempHome } from './helpers.js';
+import { reviseUnit, seedUnit, tempBareGitRepo, tempGitRepo, tempHome } from './helpers.js';
 
 function world() {
   const repo = tempGitRepo();
@@ -13,8 +13,8 @@ function world() {
   const projects = path.join(home, 'Vault', 'Projects');
   fs.mkdirSync(projects, { recursive: true });
   configureGlobal({ homeDir: home, vault: path.join(home, 'Vault'), projectFolder: 'Projects' });
-  initRepo({ cwd: repo, projectName: 'P', obsidianNote: 'p.md' });
-  startTask({ cwd: repo, id: '1', title: 'T', task: 'Do it.', current: 'First.', next: 'Second.' });
+  initRepo({ cwd: repo, homeDir: home, projectName: 'P', obsidianNote: 'p.md' });
+  seedUnit(repo, { id: '1', title: 'T', task: 'Do it.', current: 'First.', next: 'Second.' }, { homeDir: home });
   return { repo, home, note: path.join(projects, 'p.md') };
 }
 
@@ -40,7 +40,7 @@ test('real progress changes are still written, then go quiet again', () => {
   const w = world();
   syncObsidian({ cwd: w.repo, homeDir: w.home });
   pastMtime(w.note);
-  checkpoint({ cwd: w.repo, current: 'Changed.', next: 'More.' });
+  reviseUnit(w.repo, '1', { current: 'Changed.', next: 'More.' }, { homeDir: w.home });
   const r = syncObsidian({ cwd: w.repo, homeDir: w.home });
   assert.equal(r.unchanged, false);
   assert.match(fs.readFileSync(w.note, 'utf8'), /Changed\./);

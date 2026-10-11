@@ -3,143 +3,14 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  beginRound,
-  checkpoint,
-  gateStatus,
-  initRepo,
-  loadRuntime,
-  loadState,
-  startTask,
-} from '../src/core.js';
-import { cloneGitRepo, tempBareGitRepo, tempGitRepo, tempHome } from './helpers.js';
+import { initRepo, loadState } from '../src/core.js';
+import { cloneGitRepo, reviseUnitAt, startUnit, tempBareGitRepo, tempGitRepo, tempHome } from './helpers.js';
 
 function attachOrigin(repo, remote) {
   execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', remote]);
   execFileSync('git', ['-C', repo, 'push', '-q', 'origin', 'HEAD:refs/heads/main']);
   execFileSync('git', ['--git-dir', remote, 'symbolic-ref', 'HEAD', 'refs/heads/main']);
 }
-
-
-test('Current changes append old fact to History while Next is rewritten from reality', () => {
-  const repo = tempGitRepo();
-  initRepo({ cwd: repo, projectName: 'SpinLab', obsidianNote: 'project - spinlab.md' });
-  startTask({
-    cwd: repo,
-    id: '5.3.8',
-    title: 'AFM plotting',
-    task: 'Add AFM plotting to SpinLab.',
-    current: 'First AFM version can plot data.',
-    next: 'Adjust the UI.',
-  });
-
-  beginRound({ cwd: repo, id: '5.3.8' });
-  fs.appendFileSync(path.join(repo, 'app.txt'), 'ui change\n');
-  checkpoint({
-    cwd: repo,
-    id: '5.3.8',
-    current: 'AFM UI first revision is complete.',
-    next: 'Add selectable flatten.',
-  });
-
-  beginRound({ cwd: repo, id: '5.3.8' });
-  fs.appendFileSync(path.join(repo, 'app.txt'), 'colorbar change\n');
-  checkpoint({
-    cwd: repo,
-    id: '5.3.8',
-    current: 'Colorbar behavior was adjusted first.',
-    next: 'Continue with selectable flatten.',
-  });
-
-  const task = loadState(repo).tasks[0];
-  assert.equal(task.current, 'Colorbar behavior was adjusted first.');
-  assert.equal(task.next, 'Continue with selectable flatten.');
-  assert.deepEqual(task.history.map((x) => x.text), [
-    'First AFM version can plot data.',
-    'AFM UI first revision is complete.',
-  ]);
-  assert.ok(!task.history.some((x) => x.text === 'Add selectable flatten.'));
-});
-
-test('gate is READY after checkpoint and PENDING after new work', () => {
-  const repo = tempGitRepo();
-  initRepo({ cwd: repo, projectName: 'Demo', obsidianNote: 'project - demo.md' });
-  startTask({ cwd: repo, id: 'M1', title: 'First task', task: 'Do one thing.' });
-  beginRound({ cwd: repo, id: 'M1' });
-  fs.appendFileSync(path.join(repo, 'app.txt'), 'work\n');
-  checkpoint({ cwd: repo, current: 'The first thing is implemented.', next: 'Validate usage.' });
-  assert.equal(gateStatus({ cwd: repo }).status, 'READY');
-  fs.appendFileSync(path.join(repo, 'app.txt'), 'more work\n');
-  assert.equal(gateStatus({ cwd: repo }).status, 'PENDING');
-});
-
-test('an open round is deterministically pending even before files change', () => {
-  const repo = tempGitRepo();
-  initRepo({ cwd: repo, projectName: 'Demo', obsidianNote: 'project - demo.md' });
-  startTask({ cwd: repo, id: 'M1', title: 'First task', task: 'Do one thing.' });
-  beginRound({ cwd: repo, id: 'M1' });
-  const gate = gateStatus({ cwd: repo });
-  assert.equal(gate.status, 'PENDING');
-  assert.match(gate.reason, /uncheckpointed round/);
-});
-
-test('terminal tasks record completion and cannot be silently reopened', () => {
-  const repo = tempGitRepo();
-  initRepo({ cwd: repo, projectName: 'Demo', obsidianNote: 'project - demo.md' });
-  startTask({ cwd: repo, id: '1.0.0', title: 'Release', task: 'Ship the release.', current: 'Ready for merge.' });
-  checkpoint({ cwd: repo, current: 'Release merged.', next: '', status: 'Completed', outcome: 'Merged' });
-  const task = loadState(repo).tasks[0];
-  assert.equal(task.status, 'Completed');
-  assert.equal(task.outcome, 'Merged');
-  assert.ok(task.completed);
-  assert.throws(() => checkpoint({ cwd: repo, current: 'Reopened.', next: 'More work', status: 'In progress' }), /cannot be reopened/);
-});
-
-test('repeating the same Current does not duplicate History', () => {
-  const repo = tempGitRepo();
-  initRepo({ cwd: repo, projectName: 'Demo', obsidianNote: 'project - demo.md' });
-  startTask({ cwd: repo, id: 'M1', title: 'Task', task: 'Task.', current: 'Same fact.' });
-  checkpoint({ cwd: repo, current: 'Same fact.', next: 'Next A' });
-  checkpoint({ cwd: repo, current: 'Same fact.', next: 'Next B' });
-  assert.equal(loadState(repo).tasks[0].history.length, 0);
-});
-
-
-test('checkpoint rejects an explicit task id that differs from the active round', () => {
-  const repo = tempGitRepo();
-  initRepo({ cwd: repo, projectName: 'Demo', obsidianNote: 'project - demo.md' });
-  startTask({ cwd: repo, id: 'A', title: 'Task A', task: 'Do A.', current: 'A started.' });
-  startTask({ cwd: repo, id: 'B', title: 'Task B', task: 'Do B.', current: 'B started.' });
-  beginRound({ cwd: repo, id: 'A' });
-  fs.appendFileSync(path.join(repo, 'app.txt'), 'work for A\n');
-
-  assert.throws(
-    () => checkpoint({ cwd: repo, id: 'B', current: 'Wrongly attributed work.', next: 'Bad next.' }),
-    /active for A/,
-  );
-
-  const gate = gateStatus({ cwd: repo });
-  assert.equal(gate.status, 'PENDING');
-  assert.equal(gate.taskId, 'A');
-  const state = loadState(repo);
-  assert.equal(state.tasks.find((task) => task.id === 'B').current, 'B started.');
-});
-
-test('same-size changes to large untracked files invalidate a checkpoint', () => {
-  const repo = tempGitRepo();
-  initRepo({ cwd: repo, projectName: 'Demo', obsidianNote: 'project - demo.md' });
-  startTask({ cwd: repo, id: 'M1', title: 'Large artifact', task: 'Track large repo work.' });
-  beginRound({ cwd: repo, id: 'M1' });
-
-  const artifact = path.join(repo, 'large.bin');
-  const size = 10 * 1024 * 1024 + 17;
-  fs.writeFileSync(artifact, Buffer.alloc(size, 0x41));
-  checkpoint({ cwd: repo, current: 'Large artifact was produced.', next: 'Inspect the result.' });
-  assert.equal(gateStatus({ cwd: repo }).status, 'READY');
-
-  fs.writeFileSync(artifact, Buffer.alloc(size, 0x42));
-  assert.equal(gateStatus({ cwd: repo }).status, 'PENDING');
-});
 
 
 test('durable state writes auto-push to origin/docflow-state', () => {
@@ -156,7 +27,7 @@ test('durable state writes auto-push to origin/docflow-state', () => {
   );
   assert.match(initRemote, /"projectName": "Demo"/);
 
-  startTask({
+  startUnit({
     cwd: repo,
     homeDir: home,
     id: 'M1',
@@ -164,7 +35,7 @@ test('durable state writes auto-push to origin/docflow-state', () => {
     task: 'Verify automatic durable-state backup.',
     current: 'Initial state.',
   });
-  checkpoint({
+  reviseUnitAt({
     cwd: repo,
     homeDir: home,
     id: 'M1',
@@ -225,7 +96,7 @@ test('auto-push supports SHA-256 Git repositories', () => {
   attachOrigin(repo, remote);
 
   initRepo({ cwd: repo, homeDir: home, projectName: 'SHA Demo', obsidianNote: 'project - sha-demo.md' });
-  startTask({
+  startUnit({
     cwd: repo,
     homeDir: home,
     id: 'sha-unit',
@@ -335,7 +206,7 @@ test('remote updates to other units are incorporated before an automatic push', 
   attachOrigin(first, remote);
 
   initRepo({ cwd: first, homeDir: firstHome, projectName: 'Demo', obsidianNote: 'project - demo.md' });
-  startTask({
+  startUnit({
     cwd: first,
     homeDir: firstHome,
     id: 'A',
@@ -347,7 +218,7 @@ test('remote updates to other units are incorporated before an automatic push', 
   const second = cloneGitRepo(remote);
   const secondHome = tempHome();
   initRepo({ cwd: second, homeDir: secondHome });
-  startTask({
+  startUnit({
     cwd: second,
     homeDir: secondHome,
     id: 'B',
@@ -358,7 +229,7 @@ test('remote updates to other units are incorporated before an automatic push', 
 
   // first still has the pre-B local state. A write to a different unit must
   // refresh origin/docflow-state, preserve B, and then append C.
-  startTask({
+  startUnit({
     cwd: first,
     homeDir: firstHome,
     id: 'C',
@@ -391,7 +262,7 @@ test('a remote advance during push is rejected without advancing local state', (
   attachOrigin(first, remote);
 
   initRepo({ cwd: first, homeDir: firstHome, projectName: 'Demo', obsidianNote: 'project - demo.md' });
-  startTask({
+  startUnit({
     cwd: first,
     homeDir: firstHome,
     id: 'A',
@@ -420,7 +291,7 @@ test('a remote advance during push is rejected without advancing local state', (
       && args.includes('origin')
     ) {
       injected = true;
-      startTask({
+      startUnit({
         cwd: second,
         homeDir: secondHome,
         id: 'B',
@@ -433,7 +304,7 @@ test('a remote advance during push is rejected without advancing local state', (
   };
 
   assert.throws(
-    () => startTask({
+    () => startUnit({
       cwd: first,
       homeDir: firstHome,
       exec: racingExec,
@@ -475,7 +346,7 @@ test('remote same-unit advancement makes a stale checkpoint fail closed', () => 
   attachOrigin(first, remote);
 
   initRepo({ cwd: first, homeDir: firstHome, projectName: 'Demo', obsidianNote: 'project - demo.md' });
-  startTask({
+  startUnit({
     cwd: first,
     homeDir: firstHome,
     id: 'shared',
@@ -498,19 +369,20 @@ test('remote same-unit advancement makes a stale checkpoint fail closed', () => 
       && args.includes('--git-common-dir')
     ) {
       injected = true;
-      checkpoint({
+      reviseUnitAt({
         cwd: second,
         homeDir: secondHome,
         id: 'shared',
         current: 'Remote actor checkpoint.',
         next: 'Remote next.',
+        history: [{ at: '2026-10-02T00:00:00.000Z', text: 'Initial fact.' }],
       });
     }
     return execFileSync(command, args, options);
   };
 
   assert.throws(
-    () => checkpoint({
+    () => reviseUnitAt({
       cwd: first,
       homeDir: firstHome,
       exec: interleavingExec,
@@ -532,7 +404,7 @@ test('stale concurrent checkpoint is rejected instead of overwriting Current and
   const repo = tempGitRepo();
   const home = tempHome();
   initRepo({ cwd: repo, homeDir: home, projectName: 'Demo', obsidianNote: 'project - demo.md' });
-  startTask({
+  startUnit({
     cwd: repo,
     homeDir: home,
     id: 'shared',
@@ -552,19 +424,20 @@ test('stale concurrent checkpoint is rejected instead of overwriting Current and
       && args.includes('--git-common-dir')
     ) {
       injected = true;
-      checkpoint({
+      reviseUnitAt({
         cwd: repo,
         homeDir: home,
         id: 'shared',
         current: 'Actor B checkpoint.',
         next: 'B next.',
+        history: [{ at: '2026-10-02T00:00:00.000Z', text: 'Initial fact.' }],
       });
     }
     return execFileSync(command, args, options);
   };
 
   assert.throws(
-    () => checkpoint({
+    () => reviseUnitAt({
       cwd: repo,
       homeDir: home,
       exec: interleavingExec,
@@ -598,7 +471,7 @@ test('concurrent creation of the same task id fails closed', () => {
       && args.includes('--git-common-dir')
     ) {
       injected = true;
-      startTask({
+      startUnit({
         cwd: repo,
         homeDir: home,
         id: 'same-id',
@@ -611,7 +484,7 @@ test('concurrent creation of the same task id fails closed', () => {
   };
 
   assert.throws(
-    () => startTask({
+    () => startUnit({
       cwd: repo,
       homeDir: home,
       exec: interleavingExec,
@@ -642,7 +515,7 @@ test('durable unit History survives feature worktree and branch deletion', () =>
     projectName: 'SpinLab',
     obsidianNote: 'project - spinlab.md',
   });
-  startTask({
+  startUnit({
     cwd: feature,
     homeDir: home,
     id: 'afm-workflow',
@@ -651,14 +524,13 @@ test('durable unit History survives feature worktree and branch deletion', () =>
     current: 'AFM first version works.',
     next: 'Refine the UI.',
   });
-  beginRound({ cwd: feature, id: 'afm-workflow' });
-  fs.appendFileSync(path.join(feature, 'app.txt'), 'AFM work\n');
-  checkpoint({
+  reviseUnitAt({
     cwd: feature,
     homeDir: home,
     id: 'afm-workflow',
     current: 'AFM UI refinement is complete.',
     next: 'Run regression tests.',
+    history: [{ at: '2026-10-02T00:00:00.000Z', text: 'AFM first version works.' }],
   });
 
   const before = loadState(feature).tasks.find((task) => task.id === 'afm-workflow');
@@ -731,7 +603,7 @@ test('legacy unit migration fails closed if the remote creates the same unit dur
       commonDirCalls += 1;
       if (!injected && commonDirCalls === 2) {
         injected = true;
-        startTask({
+        startUnit({
           cwd: first,
           homeDir: firstHome,
           id: 'shared',
@@ -804,7 +676,6 @@ test('legacy worktree-local state migrates losslessly and cleans the worktree', 
   assert.equal(task.current, 'AFM UI is aligned.');
   assert.equal(task.next, 'Run regression tests.');
   assert.deepEqual(task.history.map((entry) => entry.text), ['AFM first version can plot data.']);
-  assert.equal(loadRuntime(repo).activeTaskId, 'afm-workflow');
 
   const project = execFileSync('git', ['-C', repo, 'show', 'docflow-state:.docflow/project.md'], { encoding: 'utf8' });
   assert.match(project, /Legacy project definition/);

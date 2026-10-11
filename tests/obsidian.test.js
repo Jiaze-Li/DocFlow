@@ -6,18 +6,14 @@ import path from 'node:path';
 import {
   MANAGED_BEGIN,
   MANAGED_END,
-  beginRound,
-  checkpoint,
   configureGlobal,
-  gateStatus,
   initRepo,
   loadState,
-  startTask,
   syncObsidian,
   unitMarkers,
   upsertManagedBlock,
 } from '../src/core.js';
-import { tempGitRepo, tempHome } from './helpers.js';
+import { reviseUnit, seedUnit, tempGitRepo, tempHome } from './helpers.js';
 
 test('Obsidian sync preserves manual project content and updates only one managed block', () => {
   const repo = tempGitRepo();
@@ -30,9 +26,12 @@ test('Obsidian sync preserves manual project content and updates only one manage
   const note = path.join(projects, 'project - spinlab.md');
   fs.writeFileSync(note, '---\ntype: project\n---\n\n## Project definition\nManual content stays here.\n');
 
-  startTask({ cwd: repo, id: '5.3.8', title: 'AFM plotting', task: 'Add AFM plotting.', current: 'First version plots data.', next: 'Adjust UI.' });
+  seedUnit(repo, { id: '5.3.8', title: 'AFM plotting', task: 'Add AFM plotting.', current: 'First version plots data.', next: 'Adjust UI.' }, { homeDir: home });
   syncObsidian({ cwd: repo, homeDir: home });
-  checkpoint({ cwd: repo, current: 'UI first revision is complete.', next: 'Add flatten.' });
+  reviseUnit(repo, '5.3.8', {
+    current: 'UI first revision is complete.', next: 'Add flatten.',
+    history: [{ at: '2026-10-01T00:00:00.000Z', text: 'First version plots data.' }],
+  }, { homeDir: home });
   syncObsidian({ cwd: repo, homeDir: home });
 
   const text = fs.readFileSync(note, 'utf8');
@@ -56,11 +55,10 @@ test('legacy unit heading uses Branch prefix without repeating stored title', ()
   const manual = '## Project definition\nThese notes belong to the user.\n';
   fs.mkdirSync(path.dirname(notePath), { recursive: true });
   fs.writeFileSync(notePath, manual);
-  startTask({
-    cwd: repo, homeDir: home, id: 'afm-workflow', title: 'AFM Plotting Workflow',
-    task: 'Add plotting', current: 'First version works', next: 'Refine controls',
-    now: new Date('2026-09-20T03:06:17.792Z'),
-  });
+  seedUnit(repo, {
+    id: 'afm-workflow', title: 'AFM Plotting Workflow', task: 'Add plotting',
+    current: 'First version works', next: 'Refine controls', started: '2026-09-20T03:06:17.792Z',
+  }, { homeDir: home, updatedAt: '2026-09-20T03:06:17.792Z' });
 
   const first = syncObsidian({ cwd: repo, homeDir: home });
   assert.equal(first.unchanged, false);
@@ -87,23 +85,14 @@ test('Obsidian projection shows compact lifecycle dates while durable state keep
   configureGlobal({ homeDir: home, vault, projectFolder: '02 Projects' });
   initRepo({ cwd: repo, projectName: 'SpinLab', obsidianNote: 'project - spinlab.md' });
 
-  startTask({
-    cwd: repo,
-    id: 'v5.3.8',
-    title: '3ω Scaling vs Angle',
-    task: 'Track angle scaling.',
-    current: 'Work started.',
-    now: new Date('2026-09-20T03:06:20.245Z'),
-  });
-  checkpoint({
-    cwd: repo,
-    homeDir: home,
-    id: 'v5.3.8',
-    current: 'Work completed.',
-    status: 'Completed',
-    outcome: 'Merged',
-    now: new Date('2026-09-21T15:41:08.000Z'),
-  });
+  seedUnit(repo, {
+    id: 'v5.3.8', title: '3ω Scaling vs Angle', task: 'Track angle scaling.',
+    current: 'Work started.', started: '2026-09-20T03:06:20.245Z',
+  }, { homeDir: home, updatedAt: '2026-09-20T03:06:20.245Z' });
+  reviseUnit(repo, 'v5.3.8', {
+    current: 'Work completed.', status: 'Completed', outcome: 'Merged', completed: '2026-09-21T15:41:08.000Z',
+  }, { homeDir: home, updatedAt: '2026-09-21T15:41:08.000Z' });
+  syncObsidian({ cwd: repo, homeDir: home });
 
   const note = fs.readFileSync(path.join(vault, '02 Projects', 'project - spinlab.md'), 'utf8');
   assert.match(note, /\*\*Started:\*\* 2026-09-20\n\*\*Updated at:\*\* 2026-09-21 23:41 SGT/);
@@ -122,7 +111,7 @@ test('missing Obsidian note is created as standard Markdown', () => {
   const vault = path.join(home, 'PhD');
   configureGlobal({ homeDir: home, vault, projectFolder: '02 Projects' });
   initRepo({ cwd: repo, projectName: 'ReviewLoop', summary: 'Independent review workflow.', obsidianNote: 'project - reviewloop.md' });
-  startTask({ cwd: repo, id: '2.1.0', title: 'DocFlow integration', task: 'Integrate progress memory.' });
+  seedUnit(repo, { id: '2.1.0', title: 'DocFlow integration', task: 'Integrate progress memory.' }, { homeDir: home });
   const result = syncObsidian({ cwd: repo, homeDir: home });
   assert.equal(result.created, true);
   const text = fs.readFileSync(result.path, 'utf8');
@@ -134,28 +123,6 @@ test('missing Obsidian note is created as standard Markdown', () => {
 
 test('malformed managed markers fail closed', () => {
   assert.throws(() => upsertManagedBlock(`manual\n${MANAGED_BEGIN}\nbroken`, `${MANAGED_BEGIN}\nok\n${MANAGED_END}\n`), /malformed/);
-});
-
-
-test('checkpoint seals the fingerprint after an Obsidian projection inside the repository', () => {
-  const repo = tempGitRepo();
-  const home = tempHome();
-  configureGlobal({ homeDir: home, vault: repo, projectFolder: 'notes' });
-  initRepo({ cwd: repo, projectName: 'Demo', obsidianNote: 'project - demo.md' });
-  startTask({ cwd: repo, id: 'M1', title: 'In-repo projection', task: 'Keep the projection in the repo.' });
-  beginRound({ cwd: repo, id: 'M1' });
-  fs.appendFileSync(path.join(repo, 'app.txt'), 'meaningful work\n');
-
-  const result = checkpoint({
-    cwd: repo,
-    homeDir: home,
-    current: 'Meaningful work is complete.',
-    next: 'Continue with the next task.',
-  });
-
-  assert.equal(result.obsidian.skipped, false);
-  assert.equal(result.obsidian.path, path.join(repo, 'notes', 'project - demo.md'));
-  assert.equal(gateStatus({ cwd: repo }).status, 'READY');
 });
 
 
@@ -181,14 +148,10 @@ test('two worktrees update independent units in one Obsidian project note', () =
   configureGlobal({ homeDir: home, vault, projectFolder: '02 Projects' });
 
   initRepo({ cwd: afm, projectName: 'SpinLab', obsidianNote: 'project - spinlab.md' });
-  startTask({
-    cwd: afm,
-    id: 'afm-workflow',
-    title: 'AFM Plotting Workflow',
-    task: 'Add AFM plotting workflow.',
-    current: 'AFM first version can plot data.',
-    next: 'Add flatten.',
-  });
+  seedUnit(afm, {
+    id: 'afm-workflow', title: 'AFM Plotting Workflow', task: 'Add AFM plotting workflow.',
+    current: 'AFM first version can plot data.', next: 'Add flatten.',
+  }, { homeDir: home });
   syncObsidian({ cwd: afm, homeDir: home, taskId: 'afm-workflow' });
 
   const notePath = path.join(vault, '02 Projects', 'project - spinlab.md');
@@ -199,28 +162,20 @@ test('two worktrees update independent units in one Obsidian project note', () =
   syncObsidian({ cwd: scaling, homeDir: home });
   assert.equal(unitText(fs.readFileSync(notePath, 'utf8'), 'afm-workflow'), afmBeforeScaling);
 
-  startTask({
-    cwd: scaling,
-    id: 'v5.3.8',
-    title: '3ω Scaling vs Angle',
-    task: 'Adapt the 3ω scaling workflow for angle data.',
-    current: 'Angle workflow adaptation has started.',
-    next: 'Validate the scaling output.',
-  });
+  seedUnit(scaling, {
+    id: 'v5.3.8', title: '3ω Scaling vs Angle', task: 'Adapt the 3ω scaling workflow for angle data.',
+    current: 'Angle workflow adaptation has started.', next: 'Validate the scaling output.',
+  }, { homeDir: home });
   syncObsidian({ cwd: scaling, homeDir: home, taskId: 'v5.3.8' });
 
   const both = fs.readFileSync(notePath, 'utf8');
   const scalingBeforeAfmCheckpoint = unitText(both, 'v5.3.8');
 
-  beginRound({ cwd: afm, id: 'afm-workflow' });
-  fs.appendFileSync(path.join(afm, 'app.txt'), 'AFM UI work\n');
-  checkpoint({
-    cwd: afm,
-    homeDir: home,
-    id: 'afm-workflow',
-    current: 'AFM UI first revision is complete.',
-    next: 'Add selectable flatten.',
-  });
+  reviseUnit(afm, 'afm-workflow', {
+    current: 'AFM UI first revision is complete.', next: 'Add selectable flatten.',
+    history: [{ at: '2026-10-01T00:00:00.000Z', text: 'AFM first version can plot data.' }],
+  }, { homeDir: home });
+  syncObsidian({ cwd: afm, homeDir: home, taskId: 'afm-workflow' });
 
   const afterAfmCheckpoint = fs.readFileSync(notePath, 'utf8');
   assert.match(unitText(afterAfmCheckpoint, 'afm-workflow'), /AFM UI first revision is complete/);
@@ -228,15 +183,10 @@ test('two worktrees update independent units in one Obsidian project note', () =
   assert.equal(unitText(afterAfmCheckpoint, 'v5.3.8'), scalingBeforeAfmCheckpoint);
 
   const afmBeforeScalingCheckpoint = unitText(afterAfmCheckpoint, 'afm-workflow');
-  beginRound({ cwd: scaling, id: 'v5.3.8' });
-  fs.appendFileSync(path.join(scaling, 'app.txt'), 'scaling work\n');
-  checkpoint({
-    cwd: scaling,
-    homeDir: home,
-    id: 'v5.3.8',
-    current: 'Angle scaling output is validated.',
-    next: 'Refine the presentation.',
-  });
+  reviseUnit(scaling, 'v5.3.8', {
+    current: 'Angle scaling output is validated.', next: 'Refine the presentation.',
+  }, { homeDir: home });
+  syncObsidian({ cwd: scaling, homeDir: home, taskId: 'v5.3.8' });
 
   const finalNote = fs.readFileSync(notePath, 'utf8');
   assert.equal(unitText(finalNote, 'afm-workflow'), afmBeforeScalingCheckpoint);
@@ -246,11 +196,14 @@ test('two worktrees update independent units in one Obsidian project note', () =
 });
 
 
-function runCheckpointProcess({ cwd, homeDir, id, current, next }) {
+function runUpdateProcess({ cwd, homeDir, id, current, next }) {
   const coreUrl = new URL('../src/core.js', import.meta.url).href;
+  const helpersUrl = new URL('./helpers.js', import.meta.url).href;
   const script = [
-    `import { checkpoint } from ${JSON.stringify(coreUrl)};`,
-    `checkpoint(${JSON.stringify({ cwd, homeDir, id, current, next })});`,
+    `import { syncObsidian } from ${JSON.stringify(coreUrl)};`,
+    `import { reviseUnit } from ${JSON.stringify(helpersUrl)};`,
+    `reviseUnit(${JSON.stringify(cwd)}, ${JSON.stringify(id)}, ${JSON.stringify({ current, next })}, { homeDir: ${JSON.stringify(homeDir)} });`,
+    `syncObsidian(${JSON.stringify({ cwd, homeDir, taskId: id })});`,
   ].join('\n');
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
@@ -261,12 +214,12 @@ function runCheckpointProcess({ cwd, homeDir, id, current, next }) {
     child.on('error', reject);
     child.on('exit', (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`checkpoint child failed (${code}): ${stderr}`));
+      else reject(new Error(`update child failed (${code}): ${stderr}`));
     });
   });
 }
 
-test('concurrent worktree checkpoints preserve both Project units', async () => {
+test('concurrent worktree updates preserve both Project units', async () => {
   const root = tempGitRepo();
   const parent = path.dirname(root);
   const afm = path.join(parent, `${path.basename(root)}-concurrent-afm`);
@@ -279,41 +232,28 @@ test('concurrent worktree checkpoints preserve both Project units', async () => 
   configureGlobal({ homeDir: home, vault, projectFolder: '02 Projects' });
 
   initRepo({ cwd: afm, projectName: 'SpinLab', obsidianNote: 'project - spinlab.md' });
-  startTask({
-    cwd: afm,
-    id: 'afm-workflow',
-    title: 'AFM Plotting Workflow',
-    task: 'Add AFM plotting workflow.',
-    current: 'AFM initial state.',
-    next: 'AFM next.',
-  });
+  seedUnit(afm, {
+    id: 'afm-workflow', title: 'AFM Plotting Workflow', task: 'Add AFM plotting workflow.',
+    current: 'AFM initial state.', next: 'AFM next.',
+  }, { homeDir: home });
   syncObsidian({ cwd: afm, homeDir: home, taskId: 'afm-workflow' });
 
   initRepo({ cwd: scaling, projectName: 'SpinLab', obsidianNote: 'project - spinlab.md' });
-  startTask({
-    cwd: scaling,
-    id: 'v5.3.8',
-    title: '3ω Scaling vs Angle',
-    task: 'Adapt angle scaling.',
-    current: 'Scaling initial state.',
-    next: 'Scaling next.',
-  });
+  seedUnit(scaling, {
+    id: 'v5.3.8', title: '3ω Scaling vs Angle', task: 'Adapt angle scaling.',
+    current: 'Scaling initial state.', next: 'Scaling next.',
+  }, { homeDir: home });
   syncObsidian({ cwd: scaling, homeDir: home, taskId: 'v5.3.8' });
 
-  beginRound({ cwd: afm, id: 'afm-workflow' });
-  beginRound({ cwd: scaling, id: 'v5.3.8' });
-  fs.appendFileSync(path.join(afm, 'app.txt'), 'parallel AFM work\n');
-  fs.appendFileSync(path.join(scaling, 'app.txt'), 'parallel scaling work\n');
-
   await Promise.all([
-    runCheckpointProcess({
+    runUpdateProcess({
       cwd: afm,
       homeDir: home,
       id: 'afm-workflow',
       current: 'AFM concurrent checkpoint landed.',
       next: 'Continue AFM.',
     }),
-    runCheckpointProcess({
+    runUpdateProcess({
       cwd: scaling,
       homeDir: home,
       id: 'v5.3.8',
@@ -337,14 +277,10 @@ test('legacy whole-project task sections migrate in place without duplication', 
   fs.mkdirSync(projects, { recursive: true });
   configureGlobal({ homeDir: home, vault, projectFolder: '02 Projects' });
   initRepo({ cwd: repo, projectName: 'SpinLab', obsidianNote: 'project - spinlab.md' });
-  startTask({
-    cwd: repo,
-    id: 'afm-workflow',
-    title: 'AFM Plotting Workflow',
-    task: 'Add AFM plotting workflow.',
-    current: 'AFM current state from canonical DocFlow state.',
-    next: 'Add selectable flatten.',
-  });
+  seedUnit(repo, {
+    id: 'afm-workflow', title: 'AFM Plotting Workflow', task: 'Add AFM plotting workflow.',
+    current: 'AFM current state from canonical DocFlow state.', next: 'Add selectable flatten.',
+  }, { homeDir: home });
 
   const note = path.join(projects, 'project - spinlab.md');
   fs.writeFileSync(note, [
@@ -402,16 +338,14 @@ test('legacy branch-like units show their own durable time without rewriting unc
   fs.mkdirSync(path.dirname(notePath), { recursive: true });
   fs.writeFileSync(notePath, manual);
 
-  startTask({
-    cwd: repo, homeDir: home, id: 'afm-workflow', title: 'AFM Plotting Workflow',
-    task: 'Add AFM workflow', current: 'AFM controls ready',
-    now: new Date('2026-09-24T15:57:48.830Z'),
-  });
-  startTask({
-    cwd: repo, homeDir: home, id: 'v5.3.8', title: '3ω Scaling vs Angle',
-    task: 'Analyze angle scaling', current: 'Angle selection ready',
-    now: new Date('2026-09-20T03:06:31.308Z'),
-  });
+  seedUnit(repo, {
+    id: 'afm-workflow', title: 'AFM Plotting Workflow', task: 'Add AFM workflow',
+    current: 'AFM controls ready', started: '2026-09-24T15:57:48.830Z',
+  }, { homeDir: home, updatedAt: '2026-09-24T15:57:48.830Z' });
+  seedUnit(repo, {
+    id: 'v5.3.8', title: '3ω Scaling vs Angle', task: 'Analyze angle scaling',
+    current: 'Angle selection ready', started: '2026-09-20T03:06:31.308Z',
+  }, { homeDir: home, updatedAt: '2026-09-20T03:06:31.308Z' });
 
   const initial = syncObsidian({ cwd: repo, homeDir: home });
   assert.equal(initial.unchanged, false);
@@ -426,10 +360,8 @@ test('legacy branch-like units show their own durable time without rewriting unc
   assert.equal(fs.readFileSync(notePath, 'utf8'), before);
   assert.equal(fs.statSync(notePath).mtimeMs, originalMtime);
 
-  checkpoint({
-    cwd: repo, homeDir: home, id: 'afm-workflow', current: 'AFM rendering complete',
-    now: new Date('2026-10-10T00:19:00.000Z'),
-  });
+  reviseUnit(repo, 'afm-workflow', { current: 'AFM rendering complete' }, { homeDir: home, updatedAt: '2026-10-10T00:19:00.000Z' });
+  syncObsidian({ cwd: repo, homeDir: home });
   const after = fs.readFileSync(notePath, 'utf8');
   assert.ok(after.startsWith(manual));
   assert.match(unitText(after, 'afm-workflow'), /\*\*Updated at:\*\* 2026-10-10 08:19 SGT/);

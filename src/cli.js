@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { beginRound, checkpoint, configureGlobal, gateStatus, initRepo, projectStatus, resolveRepoRoot, setBranchNext, startTask, syncObsidian } from './core.js';
+import { configureGlobal, initRepo, projectStatus, resolveRepoRoot, setBranchNext, syncObsidian } from './core.js';
 import { catchUpAll, catchUpRepo, installSyncAgent, registerRepo, uninstallSyncAgent } from './catchup.js';
 import { doctor, formatDoctor } from './doctor.js';
 import { deployRepo } from './deploy.js';
@@ -37,7 +37,7 @@ function print(value, json = false) {
 }
 
 function help() {
-  return `DocFlow\n\nCommands:\n  init --project <name> [--summary <text>] [--note <file>]\n  configure --vault <path> [--project-folder "02 Projects"]\n  start --id <id> --title <title> --task <description> [--current <text>] [--next <text>]\n  begin [--id <task-id>]\n  checkpoint [--id <task-id>] --current <text> [--next <text>] [--status <status>] [--outcome <text>]\n  gate [--json]\n  status [--json]\n  sync [--refresh] [--json]\n  catch-up                       refresh + project every registered repo (what the LaunchAgent runs)\n  install-sync-agent [--interval <seconds>]   write the macOS LaunchAgent (does not load it)\n  uninstall-sync-agent\n  update                         pull the newest DocFlow and reinstall policy + sync (same as scripts/bootstrap.sh)\n  next [--branch <name>] [--clear] -- "<text>"   record the next step for this branch (shown in Obsidian)\n  validate-message (--file <path> | --message <text>)\n  setup-repo [--action-ref <ref>]
+  return `DocFlow\n\nCommands:\n  init --project <name> [--summary <text>] [--note <file>]\n  configure --vault <path> [--project-folder "02 Projects"]\n  status [--json]\n  sync [--refresh] [--json]\n  catch-up                       refresh + project every registered repo (what the LaunchAgent runs)\n  install-sync-agent [--interval <seconds>]   write the macOS LaunchAgent (does not load it)\n  uninstall-sync-agent\n  update                         pull the newest DocFlow and reinstall policy + sync (same as scripts/bootstrap.sh)\n  next [--branch <name>] [--clear] -- "<text>"   record the next step for this branch (shown in Obsidian)\n  validate-message (--file <path> | --message <text>)\n  setup-repo [--action-ref <ref>]
   deploy [--action-ref <ref>] [--json]  activate and install the GitHub workflow on existing branches\n  ingest-github --event-name <push|pull_request> --event-path <file>\n  ingest-push --ref <refs/heads/x> --before <sha> --after <sha>\n  doctor\n  install-global\n  global-status\n\nCommon: --cwd <repo-path>`;
 }
 
@@ -57,22 +57,6 @@ export async function runCli(argv = process.argv.slice(2), env = process.env) {
       const result = configureGlobal({ homeDir, vault: opts.vault, projectFolder: opts['project-folder'] || '02 Projects' });
       print(result, Boolean(opts.json)); return 0;
     }
-    case 'start': {
-      const result = startTask({ cwd, id: opts.id, title: opts.title, task: opts.task, current: opts.current || '', next: opts.next || '', status: opts.status || 'In progress', homeDir });
-      const sync = syncObsidian({ cwd: result.repoRoot, homeDir, taskId: result.task.id });
-      print({ task: result.task, obsidian: sync }, Boolean(opts.json)); return 0;
-    }
-    case 'begin': {
-      print(beginRound({ cwd, id: opts.id }), Boolean(opts.json)); return 0;
-    }
-    case 'checkpoint': {
-      const result = checkpoint({
-        cwd, id: opts.id, current: opts.current, next: opts.next || '',
-        status: opts.status, outcome: opts.outcome, homeDir,
-      });
-      print({ task: result.task, gate: gateStatus({ cwd: result.repoRoot }), obsidian: result.obsidian }, Boolean(opts.json)); return 0;
-    }
-    case 'gate': print(gateStatus({ cwd }), Boolean(opts.json)); return 0;
     case 'status': print(projectStatus({ cwd }), Boolean(opts.json)); return 0;
     case 'sync': {
       const root = resolveRepoRoot(cwd);
