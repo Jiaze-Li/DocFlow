@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-10-11T08:32:12.711Z",
+  "updatedAt": "2026-10-11T08:32:17.856Z",
   "task": {
     "id": "claude/peaceful-darwin-wnwcpf",
     "branch": "claude/peaceful-darwin-wnwcpf",
@@ -141,14 +141,14 @@
       }
     ],
     "pr": {
-      "number": 19,
-      "state": "closed",
-      "title": "Follow main instead of the v2 tag (step 1 of 2)",
-      "url": "https://github.com/Jiaze-Li/DocFlow/pull/19",
+      "number": 20,
+      "state": "open",
+      "title": "Remove the release workflow (step 2 of 2)",
+      "url": "https://github.com/Jiaze-Li/DocFlow/pull/20",
       "merged": true,
       "mergedAt": "2026-10-11T08:30:05Z",
       "closedAt": "2026-10-11T08:30:05Z",
-      "updatedAt": "2026-10-11T08:30:05Z"
+      "updatedAt": "2026-10-11T08:32:08Z"
     },
     "completed": "2026-10-11T07:41:53Z",
     "outcome": "Merged"
