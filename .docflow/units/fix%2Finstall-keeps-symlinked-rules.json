@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-11T17:36:48.886Z",
+  "updatedAt": "2026-11-11T17:36:51.857Z",
   "task": {
     "id": "fix/install-keeps-symlinked-rules",
     "branch": "fix/install-keeps-symlinked-rules",
@@ -19,7 +19,14 @@
         "message": "Keep symlinked rules files linked when DocFlow writes them"
       }
     ],
-    "pr": null,
+    "pr": {
+      "number": 23,
+      "state": "open",
+      "title": "Keep symlinked rules files linked when DocFlow writes them",
+      "url": "https://github.com/Jiaze-Li/DocFlow/pull/23",
+      "merged": false,
+      "updatedAt": "2026-11-11T17:36:42Z"
+    },
     "completed": null,
     "outcome": null
   }
