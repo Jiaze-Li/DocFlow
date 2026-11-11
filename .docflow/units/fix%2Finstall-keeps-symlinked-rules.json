@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-11T17:36:59.589Z",
+  "updatedAt": "2026-11-11T17:39:06.696Z",
   "task": {
     "id": "fix/install-keeps-symlinked-rules",
     "branch": "fix/install-keeps-symlinked-rules",
     "title": "fix/install-keeps-symlinked-rules",
     "task": "Development branch: fix/install-keeps-symlinked-rules",
     "started": "2026-11-12T01:36:37+08:00",
-    "status": "In progress",
+    "status": "Completed",
     "current": "Keep symlinked rules files linked when DocFlow writes them",
     "next": "等独立审查通过后合并，让安装规则时不再弄断与备份仓库的关联",
     "history": [],
@@ -21,13 +21,15 @@
     ],
     "pr": {
       "number": 23,
-      "state": "open",
+      "state": "closed",
       "title": "Keep symlinked rules files linked when DocFlow writes them",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/23",
-      "merged": false,
-      "updatedAt": "2026-11-11T17:36:42Z"
+      "merged": true,
+      "mergedAt": "2026-11-11T17:38:56Z",
+      "closedAt": "2026-11-11T17:38:57Z",
+      "updatedAt": "2026-11-11T17:38:57Z"
     },
-    "completed": null,
-    "outcome": null
+    "completed": "2026-11-11T17:38:56Z",
+    "outcome": "Merged"
   }
 }
