@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-11-11T17:36:48.886Z",
+  "task": {
+    "id": "fix/install-keeps-symlinked-rules",
+    "branch": "fix/install-keeps-symlinked-rules",
+    "title": "fix/install-keeps-symlinked-rules",
+    "task": "Development branch: fix/install-keeps-symlinked-rules",
+    "started": "2026-11-12T01:36:37+08:00",
+    "status": "In progress",
+    "current": "Keep symlinked rules files linked when DocFlow writes them",
+    "next": "",
+    "history": [],
+    "commits": [
+      {
+        "sha": "73ec4082e9ec796648d9f60f53b1b06798368911",
+        "branch": "fix/install-keeps-symlinked-rules",
+        "timestamp": "2026-11-12T01:36:37+08:00",
+        "message": "Keep symlinked rules files linked when DocFlow writes them"
+      }
+    ],
+    "pr": null,
+    "completed": null,
+    "outcome": null
+  }
+}
