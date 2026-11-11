@@ -63,7 +63,22 @@ function canonicalStatus(value, fallback = 'In progress') {
   return out;
 }
 
-export function atomicWrite(filePath, content) {
+// A destination that is a symlink (e.g. a rules file linked into a dotfiles
+// repo) must stay a symlink: renaming a temp file over the link itself would
+// replace it with a regular file, so write to the link's target instead.
+function resolveWriteTarget(filePath) {
+  let target = filePath;
+  for (let hops = 0; hops < 40; hops += 1) {
+    let stat = null;
+    try { stat = fs.lstatSync(target); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (!stat?.isSymbolicLink()) return target;
+    target = path.resolve(path.dirname(target), fs.readlinkSync(target));
+  }
+  throw new Error(`Too many levels of symbolic links: ${filePath}`);
+}
+
+export function atomicWrite(destination, content) {
+  const filePath = resolveWriteTarget(destination);
   fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
   const temp = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`);
   fs.writeFileSync(temp, content, { encoding: 'utf8', mode: 0o600 });
