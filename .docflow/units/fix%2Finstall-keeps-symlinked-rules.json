@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-11T17:36:51.857Z",
+  "updatedAt": "2026-11-11T17:36:59.589Z",
   "task": {
     "id": "fix/install-keeps-symlinked-rules",
     "branch": "fix/install-keeps-symlinked-rules",
@@ -9,7 +9,7 @@
     "started": "2026-11-12T01:36:37+08:00",
     "status": "In progress",
     "current": "Keep symlinked rules files linked when DocFlow writes them",
-    "next": "",
+    "next": "等独立审查通过后合并，让安装规则时不再弄断与备份仓库的关联",
     "history": [],
     "commits": [
       {
