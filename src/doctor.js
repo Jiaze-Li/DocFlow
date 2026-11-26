@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { syncAgentStatus, listRegisteredRepos } from './catchup.js';
+import { syncAgentStatus, listRegisteredRepos, findMissingRepos } from './catchup.js';
 import { loadGlobalConfig, loadRepoConfig, loadState, resolveRepoRoot } from './core.js';
 import { globalStatus } from './install.js';
 import { workflowStatus } from './github.js';
@@ -65,7 +65,10 @@ export function doctor({ cwd = process.cwd(), homeDir = os.homedir() } = {}) {
   });
   let registered = 0;
   try { registered = listRegisteredRepos(homeDir).length; } catch { /* reported by catch-up */ }
-  checks.push({ name: 'sync_registry', ok: true, info: true, detail: `${registered} repositor${registered === 1 ? 'y' : 'ies'} registered for catch-up` });
+  let missing = [];
+  try { missing = findMissingRepos(homeDir); } catch { /* reported by catch-up */ }
+  checks.push({ name: 'sync_registry', ok: true, info: missing.length === 0, detail: `${registered} repositor${registered === 1 ? 'y' : 'ies'} registered for catch-up`
+    + (missing.length ? `; ${missing.length} path(s) no longer exist and will be pruned by the next catch-up (if a repo moved, run \`docflow sync\` inside it to register the new path): ${missing.join(', ')}` : '') });
   return { ok: checks.every((c) => c.ok), checks };
 }
 

@@ -274,7 +274,7 @@ test('v1 units without commits render exactly as before', () => {
   assert.doesNotMatch(note, /`[0-9a-f]{7}`/);
 });
 
-test('one broken repository does not stop catch-up of the others; registry is idempotent', () => {
+test('a deleted repository is pruned and does not stop catch-up of the others; registry is idempotent', () => {
   const w = world();
   w.push('feat/ok', ['Healthy repo change']);
   const c = consumer(w.remote);
@@ -283,7 +283,9 @@ test('one broken repository does not stop catch-up of the others; registry is id
   registerRepo({ repoRoot: path.join(c.home, 'deleted-repo'), homeDir: c.home });
   assert.equal(listRegisteredRepos(c.home).length, 2);
   const run = catchUpAll({ homeDir: c.home });
-  assert.equal(run.ok, false);
+  assert.deepEqual(run.pruned, [path.join(c.home, 'deleted-repo')]);
+  assert.equal(run.ok, true);
+  assert.equal(listRegisteredRepos(c.home).length, 1);
   const healthy = run.repos.find((r) => r.repoRoot === path.resolve(c.repo));
   assert.equal(healthy.synced, true);
   assert.match(fs.readFileSync(c.notePath, 'utf8'), /Healthy repo change/);
