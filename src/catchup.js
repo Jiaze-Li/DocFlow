@@ -66,10 +66,32 @@ export function catchUpRepo({ repoRoot, homeDir = os.homedir(), exec = execFileS
   }
 }
 
+/**
+ * A registered repo that was moved or deleted keeps failing every cycle and hides that its
+ * replacement was never registered. Paths on an external volume that is not mounted are kept.
+ */
+function onUnmountedVolume(root) {
+  const m = /^(\/Volumes\/[^/]+)(\/|$)/.exec(root);
+  return Boolean(m) && !fs.existsSync(m[1]);
+}
+
+export function findMissingRepos(homeDir = os.homedir()) {
+  return listRegisteredRepos(homeDir).map((r) => r.root).filter((root) => !fs.existsSync(root) && !onUnmountedVolume(root));
+}
+
+export function pruneMissingRepos({ homeDir = os.homedir() } = {}) {
+  const missing = new Set(findMissingRepos(homeDir));
+  if (missing.size === 0) return [];
+  const repos = listRegisteredRepos(homeDir).filter((r) => !missing.has(r.root));
+  atomicWrite(registryPath(homeDir), `${JSON.stringify({ schemaVersion: 1, repos }, null, 2)}\n`);
+  return [...missing];
+}
+
 export function catchUpAll({ homeDir = os.homedir(), exec = execFileSync } = {}) {
+  const pruned = pruneMissingRepos({ homeDir });
   const repos = listRegisteredRepos(homeDir);
   const results = repos.map((r) => catchUpRepo({ repoRoot: r.root, homeDir, exec }));
-  return { repos: results, ok: results.every((r) => !r.error) };
+  return { repos: results, pruned, ok: results.every((r) => !r.error) };
 }
 
 export function agentPlistPath(homeDir = os.homedir()) {
