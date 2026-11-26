@@ -19,7 +19,14 @@
         "message": "Prune registered repos whose path no longer exists during catch-up"
       }
     ],
-    "pr": null,
+    "pr": {
+      "number": 24,
+      "state": "open",
+      "title": "Prune registered repos whose path no longer exists",
+      "url": "https://github.com/Jiaze-Li/DocFlow/pull/24",
+      "merged": false,
+      "updatedAt": "2026-11-26T13:48:21Z"
+    },
     "completed": null,
     "outcome": null
   }
