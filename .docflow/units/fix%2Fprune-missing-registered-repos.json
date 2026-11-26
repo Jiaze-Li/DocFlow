@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-26T13:48:31.965Z",
+  "updatedAt": "2026-11-26T13:50:11.989Z",
   "task": {
     "id": "fix/prune-missing-registered-repos",
     "branch": "fix/prune-missing-registered-repos",
     "title": "fix/prune-missing-registered-repos",
     "task": "Development branch: fix/prune-missing-registered-repos",
     "started": "2026-11-26T21:48:17+08:00",
-    "status": "In progress",
+    "status": "Completed",
     "current": "Prune registered repos whose path no longer exists during catch-up",
     "next": "",
     "history": [],
@@ -21,13 +21,15 @@
     ],
     "pr": {
       "number": 24,
-      "state": "open",
+      "state": "closed",
       "title": "Prune registered repos whose path no longer exists",
       "url": "https://github.com/Jiaze-Li/DocFlow/pull/24",
-      "merged": false,
-      "updatedAt": "2026-11-26T13:48:21Z"
+      "merged": true,
+      "mergedAt": "2026-11-26T13:50:02Z",
+      "closedAt": "2026-11-26T13:50:02Z",
+      "updatedAt": "2026-11-26T13:50:02Z"
     },
-    "completed": null,
-    "outcome": null
+    "completed": "2026-11-26T13:50:02Z",
+    "outcome": "Merged"
   }
 }
