@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-11-26T13:48:31.965Z",
+  "task": {
+    "id": "fix/prune-missing-registered-repos",
+    "branch": "fix/prune-missing-registered-repos",
+    "title": "fix/prune-missing-registered-repos",
+    "task": "Development branch: fix/prune-missing-registered-repos",
+    "started": "2026-11-26T21:48:17+08:00",
+    "status": "In progress",
+    "current": "Prune registered repos whose path no longer exists during catch-up",
+    "next": "",
+    "history": [],
+    "commits": [
+      {
+        "sha": "832d4d8ee2604245dbf61cf114ad6ba6e503b489",
+        "branch": "fix/prune-missing-registered-repos",
+        "timestamp": "2026-11-26T21:48:17+08:00",
+        "message": "Prune registered repos whose path no longer exists during catch-up"
+      }
+    ],
+    "pr": null,
+    "completed": null,
+    "outcome": null
+  }
+}
